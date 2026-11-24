@@ -1,5 +1,16 @@
 --- a/core/src/Cabana_VerletList.hpp
 +++ b/core/src/Cabana_VerletList.hpp
+@@ -56,8 +56,8 @@
+     //! Number of neighbors per particle.
+     Kokkos::View<int*, memory_space> counts;
+ 
+-    //! Offsets into the neighbor list.
+-    Kokkos::View<int*, memory_space> offsets;
++    //! Offsets into the neighbor list. (64-bit: total neighbors can exceed 2^31)
++    Kokkos::View<int64_t*, memory_space> offsets;
+ 
+     //! Neighbor list.
+     Kokkos::View<int*, memory_space> neighbors;
 @@ -282,9 +282,12 @@
          if ( withinCutoff( i, dist_sqr ) )
          {
@@ -28,3 +39,33 @@
                  }
              } );
      }
+@@ -480,9 +486,9 @@
+     {
+         using kokkos_mem_space = KokkosMemorySpace;
+         Kokkos::View<int*, kokkos_mem_space> counts;
+-        Kokkos::View<int*, kokkos_mem_space> offsets;
++        Kokkos::View<int64_t*, kokkos_mem_space> offsets;
+         KOKKOS_INLINE_FUNCTION
+-        void operator()( const int i, int& update, const bool final_pass ) const
++        void operator()( const int i, int64_t& update, const bool final_pass ) const
+         {
+             if ( final_pass )
+                 offsets( i ) = update;
+@@ -507,7 +513,7 @@
+     void processCounts( VerletLayoutCSR )
+     {
+         // Allocate offsets.
+-        _data.offsets = Kokkos::View<int*, memory_space>(
++        _data.offsets = Kokkos::View<int64_t*, memory_space>(
+             Kokkos::ViewAllocateWithoutInitializing( "neighbor_offsets" ),
+             _data.counts.size() );
+ 
+@@ -515,7 +521,7 @@
+         OffsetScanOp<memory_space> offset_op;
+         offset_op.counts = _data.counts;
+         offset_op.offsets = _data.offsets;
+-        int total_num_neighbor;
++        int64_t total_num_neighbor;
+         Kokkos::RangePolicy<execution_space> range_policy(
+             0, _data.counts.extent( 0 ) );
+         Kokkos::parallel_scan( "Cabana::VerletListBuilder::offset_scan",

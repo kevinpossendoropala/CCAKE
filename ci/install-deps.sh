@@ -21,13 +21,15 @@ set -euo pipefail
 # download, so a moved tag cannot slip in different code.
 KOKKOS_VERSION=4.1.00
 KOKKOS_COMMIT=1a3ea28f6e97b4c9dd2c8ceed53ad58ed5f94dfe
-# Cabana 0.8.0 with one fix, ci/cabana-0.8.0-verletlist.patch: with per-particle
-# radii (the adaptive smoothing length) the neighbour counts went to the wrong
-# particle and the CSR list overflowed. The checksum below is that of the patched
-# header CCAKE is developed with.
+# Cabana 0.8.0 with two changes to the neighbour list, ci/cabana-0.8.0-verletlist.patch:
+#  - with per-particle radii (the adaptive smoothing length) the neighbour counts
+#    went to the wrong particle and the CSR list overflowed;
+#  - 64-bit offsets, because with many particles the total number of neighbours
+#    exceeds 2^31.
+# The checksum below is that of the patched header.
 CABANA_VERSION=0.8.0
 CABANA_COMMIT=44c43577c905626d1d38c257f89c305dad6e7e37
-CABANA_VERLETLIST_SHA256=38afe27a6ec5d4682d7cde6339c5c018eb780dee311c19374c5ad9a4584b2b53
+CABANA_VERLETLIST_SHA256=d699acd074c3f27380eba20ecf3eb482133beda8be9764b61e5246b5c1c05301
 
 if [ $# -ne 1 ]; then
   echo "usage: $0 <install prefix>" >&2
