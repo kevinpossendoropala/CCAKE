@@ -21,8 +21,13 @@ set -euo pipefail
 # download, so a moved tag cannot slip in different code.
 KOKKOS_VERSION=4.1.00
 KOKKOS_COMMIT=1a3ea28f6e97b4c9dd2c8ceed53ad58ed5f94dfe
+# Cabana 0.8.0 with one fix, ci/cabana-0.8.0-verletlist.patch: with per-particle
+# radii (the adaptive smoothing length) the neighbour counts went to the wrong
+# particle and the CSR list overflowed. The checksum below is that of the patched
+# header CCAKE is developed with.
 CABANA_VERSION=0.8.0
 CABANA_COMMIT=44c43577c905626d1d38c257f89c305dad6e7e37
+CABANA_VERLETLIST_SHA256=38afe27a6ec5d4682d7cde6339c5c018eb780dee311c19374c5ad9a4584b2b53
 
 if [ $# -ne 1 ]; then
   echo "usage: $0 <install prefix>" >&2
@@ -66,6 +71,15 @@ cmake --install "$WORK_DIR/kokkos-build"
 
 echo "== Cabana $CABANA_VERSION -> $PREFIX"
 fetch cabana https://github.com/ECP-copa/Cabana.git "$CABANA_VERSION" "$CABANA_COMMIT"
+CI_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+VERLET="$WORK_DIR/cabana/core/src/Cabana_VerletList.hpp"
+if git -C "$WORK_DIR/cabana" apply --check "$CI_DIR/cabana-0.8.0-verletlist.patch" 2>/dev/null; then
+  git -C "$WORK_DIR/cabana" apply "$CI_DIR/cabana-0.8.0-verletlist.patch"
+fi
+if [ "$(sha256sum "$VERLET" | cut -d' ' -f1)" != "$CABANA_VERLETLIST_SHA256" ]; then
+  echo "ERROR: Cabana_VerletList.hpp is not the expected file after the patch" >&2
+  exit 1
+fi
 # CCAKE uses Cabana::Core only. MPI and HDF5 are switched off on purpose: with
 # MPI found, every build of CCAKE would need MPI too, and Cabana refuses to
 # configure when it finds HDF5 without MPI.

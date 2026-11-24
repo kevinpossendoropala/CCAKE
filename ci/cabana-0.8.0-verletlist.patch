@@ -1,0 +1,30 @@
+--- a/core/src/Cabana_VerletList.hpp
++++ b/core/src/Cabana_VerletList.hpp
+@@ -282,9 +282,12 @@
+         if ( withinCutoff( i, dist_sqr ) )
+         {
+             c++;
+-            // Add neighbor if they will not find this particle.
++            // Add neighbor if they will not find this particle. The fill pass
++            // writes this cross-neighbour to particle j's list (addNeighbor(j,i)),
++            // so the count must credit j, not i -- otherwise j is under-allocated
++            // and its CSR slot overflows for per-particle (asymmetric) radii.
+             if ( neighborNotWithinCutoff( j, dist_sqr ) )
+-                c++;
++                Kokkos::atomic_add( &_data.counts( j ), 1 );
+         }
+         return c;
+     }
+@@ -348,8 +351,11 @@
+                     int stencil_count =
+                         linkedcell_stencil_count( team, min, max, xp, pid );
+ 
++                    // atomic accumulate: counts(pid) also receives cross-add
++                    // increments from other particles' passes (per-particle radii),
++                    // so this must not clobber them. counts() starts zero-filled.
+                     Kokkos::single( Kokkos::PerThread( team ), [&]()
+-                                    { _data.counts( pid ) = stencil_count; } );
++                                    { Kokkos::atomic_add( &_data.counts( pid ), stencil_count ); } );
+                 }
+             } );
+     }

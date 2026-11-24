@@ -50,7 +50,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.DEPS_PREFIX }}
-          key: deps-ubuntu-24.04-gcc-13-${{ hashFiles('ci/install-deps.sh') }}
+          key: deps-ubuntu-24.04-gcc-13-${{ hashFiles('ci/install-deps.sh', 'ci/*.patch') }}
 
       - name: Build Kokkos and Cabana
         if: steps.deps.outputs.cache-hit != 'true'
