@@ -1,11 +1,46 @@
 #ifndef INPUT_CPP
 #define INPUT_CPP
 
+#include <initializer_list>
+
 #include "input.h"
 
 namespace cc = ccake;
 namespace consts = constants;
 //using namespace ccake;
+
+namespace {
+/// @brief True if the configuration holds a value at this key path.
+/// @details Indexing below a block that is not in the file throws, so each
+/// level is checked before going down. Lookups are const: nothing is added.
+bool has_key(const YAML::Node& root, std::initializer_list<const char*> path)
+{
+  YAML::Node current = root;
+  for (const char* key : path)
+  {
+    if (!current.IsMap()) return false;
+    const YAML::Node next = static_cast<const YAML::Node&>(current)[key];
+    if (!next) return false;
+    current.reset(next);
+  }
+  return true;
+}
+
+/// @brief Stops the run if a setting has a value that no part of CCAKE acts on.
+/// @details Without this, a misspelt mode left the run going with whatever the
+/// code does when no branch matches (for the transport coefficients, an
+/// unset mode number).
+void require_known(const char* key, const std::string& value,
+                   std::initializer_list<const char*> known)
+{
+  for (const char* k : known)
+    if (value == k) return;
+  std::cerr << "ERROR: " << key << " '" << value << "' is not known; use one of:";
+  for (const char* k : known) std::cerr << " '" << k << "'";
+  std::cerr << " (the names are case-sensitive)." << std::endl;
+  abort();
+}
+}
 
 /// @brief Constructor of the Input class. Parses the input file and sets the
 /// values of the settings object.
@@ -99,6 +134,8 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       formatted_output::detail("This is a mandatory parameter. Aborting execution.");
       return false;
     }
+    // The types BSQHydro::read_in_initial_conditions reads.
+    require_known("initial_conditions.type", settingsPtr->IC_type, {"ccake", "ICCING", "freezein"});
 
     try{
       settingsPtr->IC_file = fs::path(node["initial_conditions"]["file"].as<std::string>());
@@ -353,7 +390,7 @@ bool cc::Input::decode_settings(const YAML::Node& node){
         settingsPtr->Freeze_Out_Temperature = cc::defaults::Freeze_Out_Temperature;
       }
       // Freeze-out is always at e <= e(T_fo, mu = 0); the "temperature" (isotherm) criterion was removed.
-      if (node["particlization"]["criterion"]
+      if (has_key(node, {"particlization", "criterion"})
           && node["particlization"]["criterion"].as<std::string>() != "energy")
       {
         std::cerr << "ERROR: particlization.criterion was removed; freeze-out is always at constant "
@@ -397,6 +434,12 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       formatted_output::report("This is an optional parameter. Setting to default value.");
       settingsPtr->etaMode = cc::defaults::etaMode;
     }
+    // The modes setup_parameters (src/transport_coefficients.cpp) acts on, and
+    // "disabled"; "holographic" is refused below as removed.
+    if (settingsPtr->etaMode != "holographic")
+      require_known("hydro.viscous_parameters.shear.mode", settingsPtr->etaMode,
+                    {"disabled", "default", "JakiParam", "constant", "LinearMus", "piecewise_muB",
+                     "interpolate"});
 
     if (settingsPtr->etaMode == "disabled"){
       formatted_output::report("Shear evolution is disabled");
@@ -465,6 +508,8 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       std::cerr << "ERROR: shear relaxation_mode 'holographic' was removed; use 'default'." << std::endl;
       abort();
     }
+    require_known("hydro.viscous_parameters.shear.relaxation_mode", settingsPtr->shearRelaxMode,
+                  {"default", "minVal", "Gubser"});
     try {
       settingsPtr->using_vorticity = node["hydro"]["viscous_parameters"]["shear"]["use_vorticity"].as<bool>();
     } catch (...) {
@@ -539,6 +584,8 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       std::cerr << "ERROR: bulk mode 'gaussian_muB' was removed." << std::endl;
       abort();
     }
+    require_known("hydro.viscous_parameters.bulk.mode", settingsPtr->zetaMode,
+                  {"default", "constant", "DNMR", "interpolate", "cs2_dependent"});
 
     if (settingsPtr->zetaMode == "constant"){
       try{
@@ -596,6 +643,8 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       formatted_output::report("This is an optional parameter. Setting to default value.");
       settingsPtr->bulkRelaxMode = cc::defaults::bulkRelaxMode;
     }
+    require_known("hydro.viscous_parameters.bulk.relaxation_mode", settingsPtr->bulkRelaxMode,
+                  {"default", "DNMR"});
 
     try{
       settingsPtr->modulate_zeta_with_tanh = node["hydro"]["viscous_parameters"]["bulk"]["modulate_with_tanh"].as<bool>();
@@ -698,12 +747,21 @@ bool cc::Input::decode_settings(const YAML::Node& node){
     }
     // The kappa_B edge tapers and the smoothed coth bracket were removed.
     for (const char* removed_key : {"taper_muB_start", "taper_muB_end", "taper_T_min", "bracket_eps"})
-      if (node["hydro"]["viscous_parameters"]["diffusion"][removed_key])
+      if (has_key(node, {"hydro", "viscous_parameters", "diffusion", removed_key}))
       {
         std::cerr << "ERROR: hydro.viscous_parameters.diffusion." << removed_key
                   << " was removed; delete the key from the config." << std::endl;
         abort();
       }
+    // Renamed to constant_kappa_over_T2 (2025-06). Refuse the old key so an old
+    // config cannot silently run with the default matrix.
+    if ( has_key(node, {"hydro", "viscous_parameters", "diffusion", "kappa_matrix"}) )
+    {
+      std::cerr << "ERROR: hydro.viscous_parameters.diffusion.kappa_matrix was renamed to "
+                   "hydro.viscous_parameters.diffusion.constant_kappa_over_T2; update the config."
+                << std::endl;
+      abort();
+    }
     try{
       settingsPtr->holographic_sigmaB_table_path
         = node["hydro"]["viscous_parameters"]["diffusion"]["sigmaB_table_path"].as<std::string>();
@@ -889,7 +947,7 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       formatted_output::report("This is an optional parameter. Setting to default value.");
       settingsPtr->source_normalization = cc::defaults::source_normalization;
     }
-    if ( node["hydro"]["source"]["test_particles"] )
+    if ( has_key(node, {"hydro", "source", "test_particles"}) )
       settingsPtr->source_test_particles = node["hydro"]["source"]["test_particles"].as<double>();
     try{
       settingsPtr->baryon_source = node["hydro"]["source"]["enable_baryon"].as<bool>();
@@ -949,8 +1007,9 @@ bool cc::Input::decode_settings(const YAML::Node& node){
     }
     // Removed source options: refuse them so an old config cannot silently run without them.
     for (const char* removed_key : {"propagate_budget", "fluidization_threshold",
-                                    "fluidization_criterion", "fluidization_delay"})
-      if (node["hydro"]["source"][removed_key])
+                                    "fluidization_criterion", "fluidization_delay",
+                                    "entropy_ref"})
+      if (has_key(node, {"hydro", "source", removed_key}))
       {
         std::cerr << "ERROR: hydro.source." << removed_key
                   << " was removed; delete the key from the config." << std::endl;
@@ -975,7 +1034,7 @@ bool cc::Input::decode_settings(const YAML::Node& node){
     }
     // Renamed from max_boost (read as a Lorentz boost). Refuse the old key so an
     // old config cannot silently fall back to the default.
-    if ( node["hydro"]["source"]["max_boost"] )
+    if ( has_key(node, {"hydro", "source", "max_boost"}) )
     {
       std::cerr << "ERROR: hydro.source.max_boost was renamed to "
                    "hydro.source.max_renormalization_factor; update the config." << std::endl;
@@ -1005,6 +1064,14 @@ bool cc::Input::decode_settings(const YAML::Node& node){
       formatted_output::report("WARNING: Could not jets_type!");
       formatted_output::report("This is an optional parameter. Setting to default value.");
       settingsPtr->jets_type = cc::defaults::jets_type;
+    }
+    // Removed with the 3D jet implementation (2026-06): the jet direction is now
+    // set by hydro.jets.phi or sampled (hydro.jets.sampling).
+    if ( has_key(node, {"hydro", "jets", "Phi_bins"}) )
+    {
+      std::cerr << "ERROR: hydro.jets.Phi_bins was removed; delete the key from the config "
+                   "(the jet direction is set by hydro.jets.phi or hydro.jets.sampling)." << std::endl;
+      abort();
     }
     try{
       settingsPtr->jets_Energy_scaling = node["hydro"]["jets"]["Energy_scaling"].as<int>();
@@ -1125,7 +1192,7 @@ bool cc::Input::decode_settings(const YAML::Node& node){
     if (settingsPtr->causality_minimal_stride < 1) settingsPtr->causality_minimal_stride = 1;
     // The Theorem-1 causality check (arXiv:2607.05639) was removed.
     for (const char* removed_key : {"causality_theorem1", "causality_theorem1_angles", "causality_zero_baryon"})
-      if (node["output"][removed_key])
+      if (has_key(node, {"output", removed_key}))
       {
         std::cerr << "ERROR: output." << removed_key
                   << " was removed; delete the key from the config."

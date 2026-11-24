@@ -190,7 +190,8 @@ class Inverter{
     /// which decade as an integer, which is the exponent of the minimum value.
     /// E.g., a value of -2 means that the minimum value is 0.01, and the
     /// maximum value is 0.1. The number of points in each dimension is always
-    /// 10. The step size is calculated as max/10.
+    /// 20, from the minimum to the maximum included, which is the grid
+    /// EoS_Interpolator expects: N = (max - min)/step + 1.
     /// @param exponent An array of 4 integers, each representing the exponent
     /// of the range in one of the 4 directions.
     void set_range(int exponent[4]){
@@ -198,7 +199,7 @@ class Inverter{
         x_min[j] = pow(10., exponent[j]);
         x_max[j] = pow(10., exponent[j]+1);
         N[j] = 20;
-        dx[j] = x_max[j]/N[j];
+        dx[j] = (x_max[j] - x_min[j])/(N[j] - 1);
       }
       range_set = true;
       std::cout << "Range for s set to...: " << x_min[0] << " " << x_max[0] << " " << N[0] << " " << dx[0] << std::endl;

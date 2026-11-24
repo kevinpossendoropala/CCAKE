@@ -124,6 +124,18 @@ private:
     return static_cast<size_t>(is) * flat_NB_ + iB;
   }
 
+  // -------- Queries above the end of the table (s, rhoB, rhoS, rhoQ).
+  /// Set once a query above the end of the table has been reported for that
+  /// variable, so that each warning appears once per run.
+  mutable bool above_table_reported_[4] = {false, false, false, false};
+  /// Largest tabulated value of a variable (0 = s, 1 = rhoB, 2 = rhoS,
+  /// 3 = rhoQ) in fm^-3, over all loaded tiles; 0 for a degenerate axis.
+  double table_top(int axis) const;
+  /// Warns, once per run and variable, that a query went above the end of the
+  /// table and that the table should be regenerated over a larger range.
+  /// `what` says which queries and how they were treated.
+  void report_above_table(int axis, const std::string & what) const;
+
 public:
   /// True when the loaded file is the flat (s, nB) per-field-dataset format.
   bool is_flat() const { return is_flat_; }

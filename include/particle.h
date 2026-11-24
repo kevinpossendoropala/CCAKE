@@ -185,9 +185,8 @@ class Particle
     // Constructors and destructors.
     Particle();
 
-    // copy-constructor
-    Particle( const Particle& p );
-   ~Particle(){}
+    // Copies and moves are the compiler's: every member is copied. A copy
+    // happens on add_particle() and whenever the particles vector grows.
 
     bool operator==( const Particle & ) const;
 

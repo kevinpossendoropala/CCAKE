@@ -606,13 +606,16 @@ void Source<D>::advance_sources()
       // only the delivered part of the chunk leaves the budget (capped 1/coverage);
       // a negligible tail counts as absorbed so the charge is still released
       source.remaining -= dE * delivered_fraction(source.coverage);
-      if (source.remaining < 1.0e-6 * std::max(source.E0, 1.0e-12))
-        source.remaining = 0.0;
     }
     else
     {
       source.remaining -= dE;
     }
+    // A negligible tail counts as absorbed, so the charge is released with the
+    // last chunk. Without it, round-off in E0 - 4*(E0/4) can leave ~1e-16 and
+    // delay the charge by a step.
+    if (source.remaining < 1.0e-6 * std::max(source.E0, 1.0e-12))
+      source.remaining = 0.0;
 
     source.dE = dE;
     source.vx = vx;

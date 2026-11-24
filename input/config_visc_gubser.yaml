@@ -55,7 +55,7 @@ hydro:
       input_initial_shear: true
       constant_eta_over_s: 0.2
       mode: constant
-      relaxation_mode: gubser
+      relaxation_mode: Gubser
       use_vorticity: false
       delta_pipi_mode: default
       tau_pipi_mode: disabled

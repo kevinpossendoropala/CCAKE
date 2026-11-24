@@ -2,6 +2,8 @@
 ///@author Willian M. Serenone
 ///@date 2023-12-15
 ///@brief Implementation of the EoS interpolator class
+#include <sstream>
+
 #include "eos_interpolator.h"
 #include "constants.h"
 
@@ -186,6 +188,38 @@ void EoS_Interpolator::load_table(std::initializer_list<int> exponents)
   H5::DataSet dw_dB_dataset = eos_file.openDataSet(table_name + "/dwdB");
   H5::DataSet dw_dS_dataset = eos_file.openDataSet(table_name + "/dwdS");
   H5::DataSet dw_dQ_dataset = eos_file.openDataSet(table_name + "/dwdQ");
+
+  // The grid size comes from the attributes, N = (max - min)/step + 1 points
+  // per axis. Every dataset must hold exactly that grid: a larger one would be
+  // read past the end of the buffers below, and any other shape would put the
+  // values at the wrong grid points.
+  auto check_shape = [&](const H5::DataSet & dataset, const char * name){
+    H5::DataSpace space = dataset.getSpace();
+    hsize_t dims[4] = {0, 0, 0, 0};
+    const int rank = space.getSimpleExtentNdims();
+    if (rank == 4) space.getSimpleExtentDims(dims);
+    if (rank != 4 || dims[0] != (hsize_t) Ns || dims[1] != (hsize_t) NB
+                  || dims[2] != (hsize_t) NS || dims[3] != (hsize_t) NQ)
+    {
+      std::cerr << "EoS table " << table_name << "/" << name << ": the dataset has rank "
+                << rank << " and shape " << dims[0] << " x " << dims[1] << " x " << dims[2]
+                << " x " << dims[3] << ", but the min, max and step attributes describe "
+                << Ns << " x " << NB << " x " << NS << " x " << NQ
+                << " points. The table cannot be read." << std::endl;
+      abort();
+    }
+  };
+  check_shape(T_dataset, "T");
+  check_shape(muB_dataset, "muB");
+  check_shape(muS_dataset, "muS");
+  check_shape(muQ_dataset, "muQ");
+  check_shape(e_dataset, "e");
+  check_shape(p_dataset, "p");
+  check_shape(cs2_dataset, "cs2");
+  check_shape(dw_ds_dataset, "dwds");
+  check_shape(dw_dB_dataset, "dwdB");
+  check_shape(dw_dS_dataset, "dwdS");
+  check_shape(dw_dQ_dataset, "dwdQ");
 
   //Create buffers for reading datasets
   std::vector<double> T_buffer(Ns*NB*NQ*NS);
@@ -537,12 +571,21 @@ void EoS_Interpolator::fill_thermodynamics(Cabana::AoSoA<CabanaParticle,
   // EoS_Interpolator (3,840 Kokkos::Views + attribute arrays) into the lambda.
   const auto* self = this;
   const bool flat = is_flat_;
+  // Queries above the end of the table, per variable (s, rhoB, rhoS, rhoQ):
+  // entries 0-3 count them, entries 4-7 hold the largest value.
+  Kokkos::View<double[8], DeviceType> above("above_table");
   auto interpolate = KOKKOS_LAMBDA(const int is, const int ia){
-    //Compute the entropy and charge densities in the particles' rest frame
+    //Compute the entropy and charge densities in the particles' rest frame.
+    //The table holds positive densities only, so it is read at |rho|. What is
+    //odd in a density, its chemical potential and dw/drho, gets the density's
+    //sign back after the interpolation (see sign_B, sign_S, sign_Q below).
+    const double rhoB_signed = device_thermo.access(is, ia, ccake::thermo_info::rhoB);
+    const double rhoS_signed = device_thermo.access(is, ia, ccake::thermo_info::rhoS);
+    const double rhoQ_signed = device_thermo.access(is, ia, ccake::thermo_info::rhoQ);
     double s = Kokkos::max(.001,device_thermo.access(is, ia, ccake::thermo_info::s));
-    double rhoB = Kokkos::max(.001,Kokkos::fabs(device_thermo.access(is, ia, ccake::thermo_info::rhoB)));
-    double rhoS = Kokkos::max(.001,Kokkos::fabs(device_thermo.access(is, ia, ccake::thermo_info::rhoS)));
-    double rhoQ = Kokkos::max(.001,Kokkos::fabs(device_thermo.access(is, ia, ccake::thermo_info::rhoQ)));
+    double rhoB = Kokkos::max(.001,Kokkos::fabs(rhoB_signed));
+    double rhoS = Kokkos::max(.001,Kokkos::fabs(rhoS_signed));
+    double rhoQ = Kokkos::max(.001,Kokkos::fabs(rhoQ_signed));
 
     int ts, tB, tS, tQ;
     if (flat)
@@ -584,39 +627,59 @@ void EoS_Interpolator::fill_thermodynamics(Cabana::AoSoA<CabanaParticle,
     if (self->S_attr[ts][tB][tS][tQ].log_spacing) pos[2] = Kokkos::log10(Kokkos::max(rhoS, 1e-30));
     if (self->Q_attr[ts][tB][tS][tQ].log_spacing) pos[3] = Kokkos::log10(Kokkos::max(rhoQ, 1e-30));
 
-    //Find the indices of the nearest neighbors in the table
+    //Find the table cell that holds the query point
     int idx[4];
 
-    // If an axis is degenerate (step==0), the only valid index is 0.
-    // Clamp on both ends so out-of-range queries don't read negative or
-    // out-of-bounds cells.
-    idx[0] = (Kokkos::fabs(ds) < 1e-30) ? 0
-            : Kokkos::min(Kokkos::max((int)Kokkos::floor((pos[0] - s_min)/ds), 0),
-                          self->s_attr[ts][tB][tS][tQ].N-1);
+    // The interpolation reads the cell's corners idx and idx+1, so the last
+    // cell starts at N-2. A query beyond either end of the grid uses the
+    // first or last cell and extrapolates linearly from it. A degenerate
+    // axis (step 0, a single point) has the one index 0.
+    auto cell_index = [](double x, double x_min, double step, int N){
+      if (Kokkos::fabs(step) < 1e-30 || N < 2) return 0;
+      const int i = (int) Kokkos::floor((x - x_min)/step);
+      return Kokkos::min(Kokkos::max(i, 0), N - 2);
+    };
+    idx[0] = cell_index(pos[0], s_min, ds, self->s_attr[ts][tB][tS][tQ].N);
+    idx[1] = cell_index(pos[1], B_min, dB, self->B_attr[ts][tB][tS][tQ].N);
+    idx[2] = cell_index(pos[2], S_min, dS, self->S_attr[ts][tB][tS][tQ].N);
+    idx[3] = cell_index(pos[3], Q_min, dQ, self->Q_attr[ts][tB][tS][tQ].N);
 
-    idx[1] = (Kokkos::fabs(dB) < 1e-30) ? 0
-            : Kokkos::min(Kokkos::max((int)Kokkos::floor((pos[1] - B_min)/dB), 0),
-                          self->B_attr[ts][tB][tS][tQ].N-1);
+    // Record queries beyond the last grid point of the table.
+    {
+      const double value[4] = {s, rhoB, rhoS, rhoQ};
+      const double x_min[4] = {s_min, B_min, S_min, Q_min};
+      const double step[4]  = {ds, dB, dS, dQ};
+      const int    N[4]     = {self->s_attr[ts][tB][tS][tQ].N, self->B_attr[ts][tB][tS][tQ].N,
+                               self->S_attr[ts][tB][tS][tQ].N, self->Q_attr[ts][tB][tS][tQ].N};
+      for (int axis = 0; axis < 4; ++axis)
+      {
+        if (N[axis] < 2 || Kokkos::fabs(step[axis]) < 1e-30) continue;
+        const double x_last = x_min[axis] + (N[axis] - 1)*step[axis];
+        if (pos[axis] - x_last > 1e-12*Kokkos::fabs(x_last))
+        {
+          Kokkos::atomic_add(&above(axis), 1.0);
+          Kokkos::atomic_max(&above(4 + axis), value[axis]);
+        }
+      }
+    }
 
-    idx[2] = (Kokkos::fabs(dS) < 1e-30) ? 0
-            : Kokkos::min(Kokkos::max((int)Kokkos::floor((pos[2] - S_min)/dS), 0),
-                          self->S_attr[ts][tB][tS][tQ].N-1);
-
-    idx[3] = (Kokkos::fabs(dQ) < 1e-30) ? 0
-            : Kokkos::min(Kokkos::max((int)Kokkos::floor((pos[3] - Q_min)/dQ), 0),
-                          self->Q_attr[ts][tB][tS][tQ].N-1);
+    // Signs of the densities. The flat (s, nB) table has no S or Q axis: its
+    // mu_S and mu_Q are functions of nB, and change sign with nB.
+    const double sign_B = (rhoB_signed < 0.0) ? -1.0 : 1.0;
+    const double sign_S = flat ? sign_B : ((rhoS_signed < 0.0) ? -1.0 : 1.0);
+    const double sign_Q = flat ? sign_B : ((rhoQ_signed < 0.0) ? -1.0 : 1.0);
 
     device_thermo.access(is, ia, ccake::thermo_info::T)    = self->interpolate4D(idx, pos, tble, ccake::eos_variables::T);
-    device_thermo.access(is, ia, ccake::thermo_info::muB)  = self->interpolate4D(idx, pos, tble, ccake::eos_variables::muB);
-    device_thermo.access(is, ia, ccake::thermo_info::muS)  = self->interpolate4D(idx, pos, tble, ccake::eos_variables::muS);
-    device_thermo.access(is, ia, ccake::thermo_info::muQ)  = self->interpolate4D(idx, pos, tble, ccake::eos_variables::muQ);
+    device_thermo.access(is, ia, ccake::thermo_info::muB)  = sign_B*self->interpolate4D(idx, pos, tble, ccake::eos_variables::muB);
+    device_thermo.access(is, ia, ccake::thermo_info::muS)  = sign_S*self->interpolate4D(idx, pos, tble, ccake::eos_variables::muS);
+    device_thermo.access(is, ia, ccake::thermo_info::muQ)  = sign_Q*self->interpolate4D(idx, pos, tble, ccake::eos_variables::muQ);
     device_thermo.access(is, ia, ccake::thermo_info::e)    = self->interpolate4D(idx, pos, tble, ccake::eos_variables::e);
     device_thermo.access(is, ia, ccake::thermo_info::p)    = self->interpolate4D(idx, pos, tble, ccake::eos_variables::p);
     device_thermo.access(is, ia, ccake::thermo_info::cs2)  = self->interpolate4D(idx, pos, tble, ccake::eos_variables::cs2);
     device_thermo.access(is, ia, ccake::thermo_info::dwds) = self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_ds);
-    device_thermo.access(is, ia, ccake::thermo_info::dwdB) = self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_dB);
-    device_thermo.access(is, ia, ccake::thermo_info::dwdS) = self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_dS);
-    device_thermo.access(is, ia, ccake::thermo_info::dwdQ) = self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_dQ);
+    device_thermo.access(is, ia, ccake::thermo_info::dwdB) = sign_B*self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_dB);
+    device_thermo.access(is, ia, ccake::thermo_info::dwdS) = sign_S*self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_dS);
+    device_thermo.access(is, ia, ccake::thermo_info::dwdQ) = sign_Q*self->interpolate4D(idx, pos, tble, ccake::eos_variables::dw_dQ);
 
     device_thermo.access(is, ia, ccake::thermo_info::w) = device_thermo.access(is, ia, ccake::thermo_info::e)
                                                         + device_thermo.access(is, ia, ccake::thermo_info::p);
@@ -625,7 +688,63 @@ void EoS_Interpolator::fill_thermodynamics(Cabana::AoSoA<CabanaParticle,
   Cabana::simd_parallel_for(simd_policy, interpolate, "interpolate");
   Kokkos::fence();
 
-} // namespace ccake
+  auto above_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), above);
+  static const char * name[4] = {"s", "rho_B", "rho_S", "rho_Q"};
+  for (int axis = 0; axis < 4; ++axis)
+  {
+    if (above_host(axis) == 0.0 || above_table_reported_[axis]) continue;
+    std::ostringstream what;
+    what << "at t = " << t << " fm/c " << (long) above_host(axis) << " of " << particles.size()
+         << " particles are above it (largest " << name[axis] << " = " << above_host(4 + axis)
+         << " fm^-3). Their thermodynamics is extrapolated linearly from the last cell of the table.";
+    report_above_table(axis, what.str());
+  }
+}
+
+/// @brief Largest tabulated value of one variable, in fm^-3.
+/// @param axis 0 = s, 1 = rhoB, 2 = rhoS, 3 = rhoQ.
+/// @return The largest last grid point of that axis over the loaded tiles, or
+/// 0 if the axis is degenerate (as S and Q are in the flat table).
+double EoS_Interpolator::table_top(int axis) const
+{
+  double top = 0.0;
+  const int ns = is_flat_ ? 1 : NTBL_s, nB = is_flat_ ? 1 : NTBL_B;
+  const int nS = is_flat_ ? 1 : NTBL_S, nQ = is_flat_ ? 1 : NTBL_Q;
+  for (int ts = 0; ts < ns; ++ts)
+  for (int tB = 0; tB < nB; ++tB)
+  for (int tS = 0; tS < nS; ++tS)
+  for (int tQ = 0; tQ < nQ; ++tQ)
+  {
+    const table_attributes * attributes[4] = {&s_attr[ts][tB][tS][tQ], &B_attr[ts][tB][tS][tQ],
+                                              &S_attr[ts][tB][tS][tQ], &Q_attr[ts][tB][tS][tQ]};
+    const table_attributes & a = *attributes[axis];
+    if (a.N < 2 || std::abs(a.step) < 1e-30) continue;
+    const double last = a.min + (a.N - 1)*a.step;
+    top = std::max(top, a.log_spacing ? std::pow(10.0, last) : last);
+  }
+  return top;
+}
+
+/// @brief Warns, once per run and variable, about queries above the end of
+/// the table, and says how to get a table that covers them.
+/// @param axis 0 = s, 1 = rhoB, 2 = rhoS, 3 = rhoQ.
+/// @param what Which queries were above the table and how they were treated.
+void EoS_Interpolator::report_above_table(int axis, const std::string & what) const
+{
+  if (above_table_reported_[axis]) return;
+  above_table_reported_[axis] = true;
+  static const char * name[4] = {"s", "rho_B", "rho_S", "rho_Q"};
+  std::ostringstream message;
+  message << "WARNING: The pre-inverted EoS table ends at " << name[axis] << " = "
+          << table_top(axis) << " fm^-3, but " << what
+          << " Regenerate the table over a larger range.";
+  if (!is_flat_)
+    message << " For this tiled format the range is set by NTBL_s, NTBL_B, NTBL_S and NTBL_Q"
+               " in include/eos_interpolator.h and by the decade loops of the"
+               " EoS_Interpolator constructor and of utilities/generate_eos_table.cpp.";
+  message << " (Reported once per run for each variable.)";
+  formatted_output::report(message.str());
+}
 
 
 /// @brief Interpolates a single paricle from the EoS table
@@ -768,6 +887,22 @@ bool EoS_Interpolator::query_thermo_host(double s, double rhoB,
   const double L_s  = std::min(std::max(std::log10(s_clamped), flat_log_s_min_),  L_s_max);
   const double L_nB = std::min(std::max(std::log10(abs_rhoB),  flat_log_nB_min_), L_nB_max);
 
+  // Report a query above the end of the table (once per run and variable).
+  if (std::log10(s_clamped) > L_s_max + 1e-12*std::abs(L_s_max))
+  {
+    std::ostringstream what;
+    what << "a lookup on the host (initial condition or freeze-out setup) asked for s = " << s
+         << " fm^-3. It used the value at the edge of the table.";
+    report_above_table(0, what.str());
+  }
+  if (std::log10(abs_rhoB) > L_nB_max + 1e-12*std::abs(L_nB_max))
+  {
+    std::ostringstream what;
+    what << "a lookup on the host (initial condition or freeze-out setup) asked for rho_B = "
+         << abs_rhoB << " fm^-3. It used the value at the edge of the table.";
+    report_above_table(1, what.str());
+  }
+
   const double xi_s_d = (L_s  - flat_log_s_min_)  / flat_dlog_s_;
   const double xi_B_d = (L_nB - flat_log_nB_min_) / flat_dlog_nB_;
   const int is = std::min(std::max((int)std::floor(xi_s_d), 0), Ns - 2);
@@ -785,10 +920,14 @@ bool EoS_Interpolator::query_thermo_host(double s, double rhoB,
   out.eos_name          = "table";
   out.eos_type_is_table = 1.0;
 
+  // The table is read at |rhoB|; the chemical potentials and dw/drhoB are odd
+  // in nB and get its sign back (as in fill_thermodynamics).
+  const double sign_B = (rhoB < 0.0) ? -1.0 : 1.0;
+
   out.T    = bil(flat_T_);
-  out.muB  = bil(flat_muB_);
-  out.muS  = bil(flat_muS_);
-  out.muQ  = bil(flat_muQ_);
+  out.muB  = sign_B*bil(flat_muB_);
+  out.muS  = sign_B*bil(flat_muS_);
+  out.muQ  = sign_B*bil(flat_muQ_);
   out.e    = bil(flat_e_);
   out.p    = bil(flat_p_);
   out.cs2  = bil(flat_cs2_);
@@ -798,7 +937,7 @@ bool EoS_Interpolator::query_thermo_host(double s, double rhoB,
   out.rhoQ = 0.0;
   out.w    = out.e + out.p;
   out.dwds = bil(flat_dwds_);
-  out.dwdB = bil(flat_dwdB_);
+  out.dwdB = sign_B*bil(flat_dwdB_);
   out.dwdS = 0.0;
   out.dwdQ = 0.0;
 
