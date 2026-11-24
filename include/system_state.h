@@ -81,7 +81,7 @@ class SystemState
     // before being accessed by the user. This can be implemented in public
     // methods, if necessary
     ////////////////////////////////////////////////////////////////////////////
-    using SerialHost = Kokkos::Device<Kokkos::Serial, Kokkos::HostSpace>;
+    using SerialHost = Kokkos::HostSpace; // Cabana>=0.8.0: AoSoA needs a memory space
     Cabana::AoSoA<CabanaParticle, DeviceType, VECTOR_LENGTH> cabana_particles; ///< Particle storage on device
     Cabana::AoSoA<CabanaParticle, SerialHost,  VECTOR_LENGTH> particles_h;    ///< Persistent host-side mirror (avoids per-call heap churn)
     ListType neighbour_list; ///< Neighbour list

@@ -175,8 +175,8 @@ public:
 
 using namespace ccake;
 
-template class BBMG<2>;
-template class BBMG<3>;
+template class ccake::BBMG<2>;
+template class ccake::BBMG<3>;
 
 template <unsigned int D>
 double BBMG<D>::get_kappa(double T) //This is taken from one plot we found of Barbara's, no reason to believe this should be set in stone. Will test multiple Kappa's
@@ -372,7 +372,7 @@ void BBMG<D>::initial()
 template <unsigned int D>
 void ccake::BBMG<D>::copy_host_to_device_BBMG(){
 
-  using SerialHost = Kokkos::Device<Kokkos::Serial, Kokkos::HostSpace>;
+  using SerialHost = Kokkos::HostSpace; // Cabana>=0.8.0: AoSoA needs a memory space
   const int N = (int)jetInfo_host.size();
   Cabana::AoSoA<ccake::jets, SerialHost, 8> jets_h("jets_h", N);
   jets_VIEW(host_, jets_h);
