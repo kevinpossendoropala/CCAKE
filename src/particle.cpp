@@ -14,9 +14,9 @@
 using namespace ccake;
 
 //Template instantiations
-template class Particle<1>;
-template class Particle<2>;
-template class Particle<3>;
+template class ccake::Particle<1>;
+template class ccake::Particle<2>;
+template class ccake::Particle<3>;
 
 /// @brief Default constructor
 template<unsigned int D>

@@ -5,12 +5,12 @@ using namespace ccake;
 
 
 //Template instantiations
-template class Output<1, EoM_default>;
-template class Output<2, EoM_default>;
-template class Output<3, EoM_default>;
-template class Output<1, EoM_cartesian>;
-template class Output<2, EoM_cartesian>;
-template class Output<3, EoM_cartesian>;
+template class ccake::Output<1, EoM_default>;
+template class ccake::Output<2, EoM_default>;
+template class ccake::Output<3, EoM_default>;
+template class ccake::Output<1, EoM_cartesian>;
+template class ccake::Output<2, EoM_cartesian>;
+template class ccake::Output<3, EoM_cartesian>;
 
 
 // Constructors and destructors.

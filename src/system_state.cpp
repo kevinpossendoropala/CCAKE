@@ -28,9 +28,9 @@ using namespace constants;
 using namespace ccake;
 
 //Template instantiations
-template class SystemState<1>;
-template class SystemState<2>;
-template class SystemState<3>;
+template class ccake::SystemState<1>;
+template class ccake::SystemState<2>;
+template class ccake::SystemState<3>;
 
 
 /// @brief Initializes the system state.

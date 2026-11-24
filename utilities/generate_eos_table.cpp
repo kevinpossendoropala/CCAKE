@@ -84,7 +84,8 @@ class Inverter{
 
     ///@brief Helper function to create datasets in the HDF5 group
     void create_datasets(H5::Group group){
-      hsize_t dims[4] = {N[0], N[1], N[2], N[3]};
+      hsize_t dims[4] = {static_cast<hsize_t>(N[0]), static_cast<hsize_t>(N[1]),
+                         static_cast<hsize_t>(N[2]), static_cast<hsize_t>(N[3])};
       H5::DataSpace table_dataspace(4, dims);
       #ifdef SAVE_DOMAIN
       s_dataset = group.createDataSet("s", H5::PredType::NATIVE_DOUBLE, table_dataspace);

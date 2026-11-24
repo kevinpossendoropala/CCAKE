@@ -6,12 +6,12 @@
 using namespace ccake;
 
 //Template instantiations
-template class BSQHydro<1,EoM_default>;
-template class BSQHydro<2,EoM_default>;
-template class BSQHydro<3,EoM_default>;
-template class BSQHydro<1,EoM_cartesian>;
-template class BSQHydro<2,EoM_cartesian>;
-template class BSQHydro<3,EoM_cartesian>;
+template class ccake::BSQHydro<1,EoM_default>;
+template class ccake::BSQHydro<2,EoM_default>;
+template class ccake::BSQHydro<3,EoM_default>;
+template class ccake::BSQHydro<1,EoM_cartesian>;
+template class ccake::BSQHydro<2,EoM_cartesian>;
+template class ccake::BSQHydro<3,EoM_cartesian>;
 
 /// @brief Constructor for the BSQHydro class.
 /// @details This constructor initializes a BSQHydro object with the given

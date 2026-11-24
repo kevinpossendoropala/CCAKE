@@ -9,9 +9,9 @@
 
 using namespace ccake;
 
-template class EoM_default<1>;
-template class EoM_default<2>;
-template class EoM_default<3>;
+template class ccake::EoM_default<1>;
+template class ccake::EoM_default<2>;
+template class ccake::EoM_default<3>;
 
 /// @brief Update gamma and v
 /// @tparam D The number of spatial dimensions.

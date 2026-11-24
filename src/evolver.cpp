@@ -3,9 +3,9 @@
 using namespace ccake;
 
 //Template instantiations
-template class Evolver<1>;
-template class Evolver<2>;
-template class Evolver<3>;
+template class ccake::Evolver<1>;
+template class ccake::Evolver<2>;
+template class ccake::Evolver<3>;
 
 /// @brief Create object responsible for controlling hydro evolution.
 /// @details This constructor sets up the evolver object with pointers to
