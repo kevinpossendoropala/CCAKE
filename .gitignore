@@ -34,3 +34,10 @@ analysis/
 input/freezein_*/
 # ship the tabulated holographic baryon DC conductivity (arXiv:1507.06972)
 !input/tables/*.dat
+# ship the test inputs and the repository-rule definitions
+!tests/**/*.dat
+!.github/**/*.json
+# Python and tool caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
