@@ -1,0 +1,118 @@
+# Measures which lines of src/ and include/ the tests execute, and sends the
+# result to Codecov, which reports on the lines a pull request changes.
+#
+# This is a separate workflow on purpose: if Codecov is unreachable, the build
+# and test results of the "CI" workflow are not affected.
+name: Coverage
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  coverage:
+    name: coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write  # lets the upload prove where it comes from; no stored secret needed
+    env:
+      CC: gcc-13
+      CXX: g++-13
+      DEPS_PREFIX: /home/runner/ccake-deps
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libhdf5-dev libgsl-dev libyaml-cpp-dev \
+            python3-numpy python3-pandas python3-pytest
+          pipx install gcovr==8.8
+
+      # Same key as the gcc-13 job of the CI workflow, so the two share one copy.
+      - name: Restore Kokkos and Cabana
+        id: deps
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-ubuntu-24.04-gcc-13-${{ hashFiles('ci/install-deps.sh') }}
+
+      - name: Build Kokkos and Cabana
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ci/install-deps.sh "$DEPS_PREFIX"
+
+      # No optimization, so that every source line maps to code that can be
+      # counted. The Debug build type is not used: it switches on checks that
+      # abort legitimate runs. -fprofile-update=atomic keeps the counters
+      # correct with several OpenMP threads.
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$DEPS_PREFIX" \
+            -DCCAKE_OPTIMIZE=OFF \
+            -DCMAKE_CXX_FLAGS_RELEASE="-O0 -g --coverage -fprofile-update=atomic -DNDEBUG" \
+            -DENABLE_TESTING=ON
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test
+        env:
+          OMP_NUM_THREADS: 2
+          OMP_PROC_BIND: "false"
+        run: |
+          ctest --test-dir build --output-on-failure -j 2 --timeout 1200 -LE quarantine
+          # the known-issue tests count for coverage too; they are expected to fail
+          ctest --test-dir build -j 2 --timeout 1200 -L quarantine || true
+
+      - name: Coverage report
+        run: |
+          gcovr --root . --object-directory build \
+            --filter 'src/' --filter 'include/' \
+            --gcov-executable gcov-13 --exclude-throw-branches \
+            --txt coverage.txt --cobertura coverage.xml --html coverage.html
+          {
+            echo "## Coverage of src/ and include/"
+            echo
+            echo '```'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Pull requests from forks cannot use the identity token; Codecov accepts
+      # their uploads without one.
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage.xml
+          disable_search: true
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          fail_ci_if_error: false
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-report
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            coverage.txt
+            coverage.xml
+            coverage.html

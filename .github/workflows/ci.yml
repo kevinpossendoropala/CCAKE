@@ -1,0 +1,228 @@
+# Builds CCAKE and runs its tests on every pull request.
+#
+# The job named "CI result" is the one to require in the branch rules: it is
+# green only when every job it depends on is green.
+#
+# To reproduce a job locally, see CONTRIBUTING.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a pull request replaces the run that was still going.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-test:
+    name: build-test (${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc-13
+            cc: gcc-13
+            cxx: g++-13
+          - compiler: clang-18
+            cc: clang-18
+            cxx: clang++-18
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      COMPILER: ${{ matrix.compiler }}
+      DEPS_PREFIX: /home/runner/ccake-deps
+      CCACHE_DIR: /home/runner/.cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 300M
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2  # the base commit is needed to see which lines a pull request changed
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libhdf5-dev libgsl-dev libyaml-cpp-dev libomp-18-dev ccache \
+            python3-numpy python3-pandas python3-pytest
+
+      # Kokkos and Cabana take minutes to build and change rarely: build them
+      # once per compiler and keep the installed prefix.
+      - name: Restore Kokkos and Cabana
+        id: deps
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-ubuntu-24.04-${{ matrix.compiler }}-${{ hashFiles('ci/install-deps.sh') }}
+
+      - name: Build Kokkos and Cabana
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ci/install-deps.sh "$DEPS_PREFIX"
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.compiler }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.compiler }}-
+
+      # x86-64-v3 instead of the default 'native': the compiler cache is shared
+      # between runners that do not all have the same processor.
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$DEPS_PREFIX" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS="-Wall -Wextra" \
+            -DCCAKE_ARCH=x86-64-v3 \
+            -DENABLE_TESTING=ON
+
+      - name: Build
+        id: build
+        run: |
+          ccache --zero-stats
+          cmake --build build -j "$(nproc)" 2>&1 | tee build.log
+          ccache --show-stats
+
+      # Tests labelled "quarantine" (the KnownIssue suite) document problems that
+      # were reported and are not fixed yet; they run in their own step below.
+      - name: Test (all threads)
+        id: test_threads
+        env:
+          OMP_NUM_THREADS: 4
+          OMP_PROC_BIND: "false"
+        run: ctest --test-dir build --output-on-failure --timeout 600 -LE quarantine --output-junit junit-threads.xml
+
+      # The same tests again on one thread. This is the OpenMP backend with a
+      # single thread, not the Kokkos Serial backend: CCAKE names Kokkos::OpenMP
+      # in its sources and cannot be built for Serial alone.
+      - name: Test (OpenMP, 1 thread)
+        if: always() && steps.build.outcome == 'success'
+        env:
+          OMP_NUM_THREADS: 1
+        run: ctest --test-dir build --output-on-failure -j 4 --timeout 600 -LE quarantine --output-junit junit-1thread.xml
+
+      # Expected to fail; shown in the summary, never blocking. A test here that
+      # starts to pass is flagged there, so it can move back into the main suite.
+      - name: Known issues (not blocking)
+        if: always() && steps.build.outcome == 'success'
+        continue-on-error: true
+        env:
+          OMP_NUM_THREADS: 2
+        run: ctest --test-dir build -L quarantine --timeout 600 --output-junit junit-known.xml
+
+      - name: Summary
+        if: always()
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          annotate=()
+          if [ "$EVENT" = "pull_request" ]; then annotate=(--annotate-diff "HEAD^1"); fi
+          python3 ci/summarize.py --title "$COMPILER" \
+            --build-log build.log --build-dir build \
+            --junit "build/junit-threads.xml=all threads" \
+            --junit "build/junit-1thread.xml=OpenMP, 1 thread" \
+            --known-issues build/junit-known.xml \
+            --output "$GITHUB_STEP_SUMMARY" "${annotate[@]}"
+
+      - name: Save compiler cache
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.compiler }}-${{ github.sha }}
+
+      - name: Keep logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-${{ matrix.compiler }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            build.log
+            build/junit-*.xml
+            build/Testing/Temporary/LastTest.log
+
+  python:
+    name: python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Python packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-numpy python3-pandas python3-pytest
+
+      - name: Test the scripts
+        run: python3 -m pytest tests/python -q
+
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the tools
+        run: |
+          pipx install pre-commit==4.7.0
+          pipx install ruff==0.17.6
+
+      # The hooks of .pre-commit-config.yaml. They only look at the test and CI files.
+      - name: Hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Workflow files
+        run: ci/actionlint.sh
+
+      # Not enforced: what ruff finds in the older scripts, for information.
+      - name: Lint backlog of the older scripts
+        if: always()
+        run: |
+          {
+            echo "## Python lint backlog (not enforced)"
+            echo
+            echo '```'
+            ruff check --no-cache --exit-zero --statistics --exclude ci --exclude tests . || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The single check to require. It also fails when a job above was cancelled
+  # or could not start, which a list of individual checks would not notice.
+  result:
+    name: CI result
+    if: always()
+    needs: [build-test, python, lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All required jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results of the required jobs: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::a required job ended with '$result'"
+              exit 1
+            fi
+          done
