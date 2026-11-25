@@ -1,6 +1,7 @@
 // Copying a particle.
 #include <gtest/gtest.h>
 
+#include <sstream>
 #include <string>
 
 #include "particle.h"
@@ -96,6 +97,57 @@ TEST(Particle, add_particle_keeps_every_particle_as_the_vector_grows){
         EXPECT_EQ(system.particles[i].thermo.s, 0.5*i);
         EXPECT_EQ(system.particles[i].sph_mass.s, 1.0 + i);
     }
+}
+
+/// The getters return the thermodynamic fields they are named after.
+TEST(Particle, getters_return_their_fields){
+    ccake::Particle<3> p;
+    double value = 1.;
+    auto next = [&value](){ value += 0.5; return value; };
+    auto& th = p.thermo;
+    th.T = next(); th.muB = next(); th.muS = next(); th.muQ = next();
+    th.p = next(); th.s = next(); th.e = next(); th.rhoB = next(); th.rhoS = next();
+    th.rhoQ = next(); th.w = next(); th.cs2 = next(); th.dwds = next(); th.dwdB = next();
+    th.dwdS = next(); th.dwdQ = next();
+    th.dalpha_Bds = next(); th.dalpha_Qds = next(); th.dalpha_Sds = next();
+    th.dalpha_BdB = next(); th.dalpha_QdB = next(); th.dalpha_SdB = next();
+    th.dalpha_BdS = next(); th.dalpha_QdS = next(); th.dalpha_SdS = next();
+    th.dalpha_BdQ = next(); th.dalpha_QdQ = next(); th.dalpha_SdQ = next();
+    th.chiBB = next(); th.chiBB0 = next();
+    th.eos_name = "tanh_conformal";
+
+    EXPECT_EQ(p.T(), th.T);       EXPECT_EQ(p.muB(), th.muB);   EXPECT_EQ(p.muS(), th.muS);
+    EXPECT_EQ(p.muQ(), th.muQ);   EXPECT_EQ(p.p(), th.p);       EXPECT_EQ(p.s(), th.s);
+    EXPECT_EQ(p.e(), th.e);       EXPECT_EQ(p.rhoB(), th.rhoB); EXPECT_EQ(p.rhoS(), th.rhoS);
+    EXPECT_EQ(p.rhoQ(), th.rhoQ); EXPECT_EQ(p.w(), th.w);       EXPECT_EQ(p.cs2(), th.cs2);
+    EXPECT_EQ(p.dwds(), th.dwds); EXPECT_EQ(p.dwdB(), th.dwdB); EXPECT_EQ(p.dwdS(), th.dwdS);
+    EXPECT_EQ(p.dwdQ(), th.dwdQ);
+    EXPECT_EQ(p.dalpha_Bds(), th.dalpha_Bds); EXPECT_EQ(p.dalpha_Qds(), th.dalpha_Qds);
+    EXPECT_EQ(p.dalpha_Sds(), th.dalpha_Sds); EXPECT_EQ(p.dalpha_BdB(), th.dalpha_BdB);
+    EXPECT_EQ(p.dalpha_QdB(), th.dalpha_QdB); EXPECT_EQ(p.dalpha_SdB(), th.dalpha_SdB);
+    EXPECT_EQ(p.dalpha_BdS(), th.dalpha_BdS); EXPECT_EQ(p.dalpha_QdS(), th.dalpha_QdS);
+    EXPECT_EQ(p.dalpha_SdS(), th.dalpha_SdS); EXPECT_EQ(p.dalpha_BdQ(), th.dalpha_BdQ);
+    EXPECT_EQ(p.dalpha_QdQ(), th.dalpha_QdQ); EXPECT_EQ(p.dalpha_SdQ(), th.dalpha_SdQ);
+    EXPECT_EQ(p.chiBB(), th.chiBB); EXPECT_EQ(p.chiBB0(), th.chiBB0);
+    EXPECT_EQ(p.get_current_eos_name(), "tanh_conformal");
+}
+
+/// The printout names each field next to its value.
+TEST(Particle, printout_lists_the_fields){
+    ccake::Particle<2> p;
+    p.ID = 42;
+    p.thermo.T = 0.75;
+    p.input.e = 12.5;
+    p.hydro.sigma = 3.25;
+    p.hydro.tau_pi = 0.375;
+    std::ostringstream out;
+    out << p;
+    const std::string text = out.str();
+    EXPECT_NE(text.find("ID.............: 42\n"), std::string::npos);
+    EXPECT_NE(text.find("thermo.T.......: 0.75\n"), std::string::npos);
+    EXPECT_NE(text.find("input.e........: 12.5\n"), std::string::npos);
+    EXPECT_NE(text.find("hydro.sigma...: 3.25\n"), std::string::npos);
+    EXPECT_NE(text.find("hydro.tau_pi..: 0.375\n"), std::string::npos);
 }
 
 int main(int argc, char* argv[]) {

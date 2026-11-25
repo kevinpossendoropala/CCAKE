@@ -174,6 +174,144 @@ TEST(OutputLayout, diffusion_numbers_reach_the_snapshot){
     expect_columns(tokens, diffusion_columns);
 }
 
+//==============================================================================
+// freeze_out.dat (Output::print_freeze_out, flush_freeze_out)
+//==============================================================================
+// The freeze-out surface is read by column number too: by the particlization code
+// and by tests/physics/physics_tools.py. Two particles get freeze-out results on the
+// device, every field a different value; only the first is marked for printing.
+
+namespace {
+
+// Field values: 1.01, 1.02, ... in the order the writer prints them in 3+1D.
+template <unsigned int D>
+void fill_results(cc::FreezeOut<D>& fo){
+    FRZ_RESULTS_VIEW(res_, fo.results)
+    auto policy = Cabana::SimdPolicy<VECTOR_LENGTH, ExecutionSpace>(0, fo.results.size());
+    Cabana::simd_parallel_for(policy, KOKKOS_LAMBDA(const int is, const int ia){
+        res_divEener.access(is, ia) = 1.01;
+        for (int i = 0; i < 3; ++i){
+            res_divE.access(is, ia, i) = 1.02 + 0.01*i;
+            res_uout.access(is, ia, i) = 1.06 + 0.01*i;
+            res_rsub.access(is, ia, i) = 1.19 + 0.01*i;
+        }
+        res_gsub.access(is, ia) = 1.05;
+        res_swsub.access(is, ia) = 1.09;
+        res_bulksub.access(is, ia) = 1.10;
+        res_shearsub.access(is, ia, 0, 0) = 1.11;
+        res_shearsub.access(is, ia, 1, 1) = 1.12;
+        res_shearsub.access(is, ia, 2, 2) = 1.13;
+        res_shear33sub.access(is, ia) = 1.14;
+        res_shearsub.access(is, ia, 1, 2) = 1.15;
+        res_shearsub.access(is, ia, 1, 3) = 1.16;
+        res_shearsub.access(is, ia, 2, 3) = 1.17;
+        res_tlist.access(is, ia) = 1.18;
+        res_sFO.access(is, ia) = 1.22;
+        res_Efluc.access(is, ia) = 1.23;
+        res_Tfluc.access(is, ia) = 1.24;
+        res_muBfluc.access(is, ia) = 1.25;
+        res_muSfluc.access(is, ia) = 1.26;
+        res_muQfluc.access(is, ia) = 1.27;
+        res_wfzfluc.access(is, ia) = 1.28;
+        res_cs2fzfluc.access(is, ia) = 1.29;
+        res_rhoBfluc.access(is, ia) = 1.30;
+        res_rhoSfluc.access(is, ia) = 1.31;
+        res_rhoQfluc.access(is, ia) = 1.32;
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 4; ++b) res_diffout.access(is, ia, a, b) = 1.33 + 0.01*(4*a + b);
+        res_eos_type.access(is, ia) = 1.;
+        res_print.access(is, ia) = (is*VECTOR_LENGTH + ia == 0);
+    }, "fill_results");
+    Kokkos::fence();
+}
+
+/// Writes the surface of two particles, one of them marked, and returns the lines.
+template <unsigned int D>
+std::vector<std::string> write_and_read_surface(){
+    auto settingsPtr = std::make_shared<Settings>();
+    settingsPtr->results_directory = ".";
+    settingsPtr->hT = 1.;
+    auto sysPtr = std::make_shared<cc::SystemState<D>>(settingsPtr);
+    sysPtr->particles.resize(2);
+    sysPtr->particles[0].ID = 0;
+    sysPtr->particles[1].ID = 1;
+    sysPtr->n_particles = 2;
+    sysPtr->t = 2.;
+    sysPtr->allocate_cabana_particles();
+    auto fo = std::make_shared<cc::FreezeOut<D>>(settingsPtr, sysPtr);
+    fill_results(*fo);
+
+    auto wsPtr = std::make_shared<cc::SPHWorkstation<D, cc::EoM_default>>(settingsPtr, sysPtr);
+    cc::Output<D, cc::EoM_default> output(settingsPtr, sysPtr, wsPtr);
+    output.print_freeze_out(fo, 1.5, -0.25, 0.);   // B, Q, S at the start of the run
+    output.flush_freeze_out();
+
+    std::ifstream in("freeze_out.dat");
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(in, line); ) lines.push_back(line);
+    return lines;
+}
+
+std::vector<std::string> tokens_of(const std::string& line){
+    std::istringstream row(line);
+    std::vector<std::string> tokens;
+    for (std::string token; row >> token; ) tokens.push_back(token);
+    return tokens;
+}
+
+// The columns after the positions are the same in both layouts, shifted.
+std::vector<Column> thermal_columns(int first){
+    std::vector<Column> c;
+    const double values[] = {1.22, 1.23, 1.24, 1.25, 1.26, 1.27, 1.28, 1.29, 1.30, 1.31, 1.32};
+    for (int k = 0; k < 11; ++k) c.push_back({first + k, values[k]});
+    for (int k = 0; k < 12; ++k) c.push_back({first + 11 + k, 1.33 + 0.01*k});
+    c.push_back({first + 23, 1.});
+    return c;
+}
+
+} // namespace
+
+/// 3+1D, 45 columns: s T^3 in 21, e 22, T 23, mu_B 24, n_B 29 (tests/physics/physics_tools.py).
+/// The header holds B, S, Q at the start of the run; only marked particles are written.
+TEST(OutputLayout, freeze_out_3d){
+    const auto lines = write_and_read_surface<3>();
+    ASSERT_EQ(lines.size(), 2u) << "the header and one element";
+    EXPECT_EQ(lines[0], "# 1.5 0 -0.25");
+    const auto tokens = tokens_of(lines[1]);
+    ASSERT_EQ(tokens.size(), 45u);
+    expect_columns(tokens, {
+        {0, 1.01}, {1, 1.02}, {2, 1.03}, {3, 1.04},   // d_tau e, d_i e
+        {4, 1.05},                                    // gamma
+        {5, 1.06}, {6, 1.07}, {7, 1.08},              // u^x, u^y, u^eta
+        {8, 1.09},                                    // V = u.dSigma
+        {9, 1.10},                                    // bulk
+        {10, 1.11}, {11, 1.12}, {12, 1.13}, {13, 1.14}, {14, 1.15}, {15, 1.16}, {16, 1.17},
+        {17, 1.18},                                   // tau
+        {18, 1.19}, {19, 1.20}, {20, 1.21},           // x, y, eta_s
+    });
+    expect_columns(tokens, thermal_columns(21));
+}
+
+/// 2+1D, 40 columns: V in 6, tau 13, s T^3 in 16, e 17, T 18, mu_B 19, n_B 24.
+TEST(OutputLayout, freeze_out_2d){
+    const auto lines = write_and_read_surface<2>();
+    ASSERT_EQ(lines.size(), 2u) << "the header and one element";
+    EXPECT_EQ(lines[0], "# 1.5 0 -0.25");
+    const auto tokens = tokens_of(lines[1]);
+    ASSERT_EQ(tokens.size(), 40u);
+    expect_columns(tokens, {
+        {0, 1.01}, {1, 1.02}, {2, 1.03},              // d_tau e, d_x e, d_y e
+        {3, 1.05},                                    // gamma
+        {4, 1.06}, {5, 1.07},                         // u^x, u^y
+        {6, 1.09},                                    // V
+        {7, 1.10},                                    // bulk
+        {8, 1.11}, {9, 1.12}, {10, 1.13}, {11, 1.14}, {12, 1.15},
+        {13, 1.18},                                   // tau
+        {14, 1.19}, {15, 1.20},                       // x, y
+    });
+    expect_columns(tokens, thermal_columns(16));
+}
+
 int main(int argc, char* argv[]) {
     Kokkos::ScopeGuard guard(argc, argv);
     testing::InitGoogleTest(&argc, argv);

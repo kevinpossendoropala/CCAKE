@@ -96,6 +96,9 @@ ccake_add_unit_test(milne_test src)
 ccake_add_unit_test(eos_test src)
 ccake_add_unit_test(output_test OWN_MAIN src)
 ccake_add_unit_test(source_test OWN_MAIN src)
+ccake_add_unit_test(transport_coefficients_test OWN_MAIN src)
+ccake_add_unit_test(eom_cartesian_test OWN_MAIN src)
+ccake_add_unit_test(jets_test OWN_MAIN src)
 
 # eom_default_test.cpp ends with a regression snapshot of the viscous time
 # derivatives: read the comment there before changing the equations of motion.
