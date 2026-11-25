@@ -1,0 +1,68 @@
+# The physics checks of tests/physics/ (see README.md there).
+#
+# kind:       surface - a run to freeze-out, compared with a reference run of CCAKE;
+#             gubser  - snapshots compared with the semi-analytic VGCC solution.
+# github:     whether the workflow can run it (all inputs reachable from a runner).
+# inputs:     one entry per @INPUT:<name>@ of config.yaml. Each is found, in this order:
+#               repo  - a file in this directory (.xz is decompressed);
+#               local - a path on Delta, or under $CCAKE_PHYSICS_DATA if that is set;
+#               url   - a download, kept in $CCAKE_PHYSICS_CACHE (default ~/.cache/ccake-physics).
+#             An input that is a directory lists its files; every file is checked against
+#             its SHA-256 before the run.
+
+gubser_bsq:
+  kind: gubser
+  dimension: 2
+  github: true
+  description: >-
+    BSQ viscous Gubser flow (arXiv:2511.22852 Fig. 7): EoS2, eta/s = 0.2, T = 250 MeV and
+    muB = 50 MeV at tau = 1 fm, r = 0; 2+1D Milne, dx = 0.05 fm, h = 0.1 fm, dt = 0.001 fm, RK2,
+    online inverter. 40,401 particles, tau = 1 to 1.6 fm.
+  inputs:
+    initial_condition:
+      sha256: 0bf671c7feb4666077b057aecc701521f91c679742a4ff9bb7b9a7cdae39cdc8
+      repo: initial_condition.dat.xz
+  reference: reference_diagonal.dat
+  times: [1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
+
+pbpb_2d:
+  kind: surface
+  dimension: 2
+  github: true
+  description: >-
+    Pb+Pb 5.02 TeV, 2+1D, TRENTo+ICCING event 0, B/S/Q on, Houston EoS (Zenodo 6829115),
+    viscous (eta/s = 0.08, cs2-dependent zeta/s), online inverter. About 14,300 particles,
+    tau = 0.6 to 14 fm.
+  inputs:
+    initial_condition:
+      sha256: ac8809daa4f3501ecf8070f4b70bcd74b72d0aee43bb39b97b081af77eaadd5d
+      repo: densities0.dat.xz
+    eos:
+      directory:
+        thermo.dat:
+          sha256: 5390451e49ce86a81ed9dd1fab0f9d06e1a75c9b73c56845e517f047b2808830
+          local: /u/kpala/git_repos/paper/test_chain/tables/thermo.dat
+          url: https://zenodo.org/records/6829115/files/thermo.dat?download=1
+  reference: reference
+
+auau77_3d:
+  kind: surface
+  dimension: 3
+  github: false   # until its inputs are on Zenodo; runs on Delta (tests/physics/delta_submit.sh)
+  description: >-
+    Au+Au 7.7 GeV, 3+1D, BES event 51: freeze-in initial condition plus 1,551 AMPT parton
+    sources, bh_new_1000 EoS (critical point), baryon charge only. About 31,800 particles,
+    tau = 1.7 to 10 fm.
+  inputs:
+    initial_condition:
+      sha256: a4e10627414a10b2907fa3b83be61717c72b727e2a2f84b24dd7f470b5b2668a
+      local: /work/hdd/bbkr/kpala/bes_thesis/secVI/ic/7p7/t0_modeA_0051.dat
+    sources:
+      sha256: a00788f27af1a914477f2de348cd66a164575511546d0ce0fea1e68539009e84
+      local: /work/nvme/bhyp/kpala/bes_thesis/events_a055_hs/7p7/evt_0051/ana/parton-initial-afterPropagation.dat
+    eos:
+      directory:
+        thermo.dat:
+          sha256: 30c6444da139b02c74ca033055b6226c434fd3b5b7e391f4b76e6ab615519b71
+          local: /projects/bbkr/kpala/eos_paper/bh_new_1000/thermo.dat
+  reference: reference

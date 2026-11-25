@@ -37,6 +37,7 @@ input/freezein_*/
 # ship the test inputs and the repository-rule definitions
 !tests/**/*.dat
 !.github/**/*.json
+!tests/physics/**/*.json
 # Python and tool caches
 __pycache__/
 .pytest_cache/
