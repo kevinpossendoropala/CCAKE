@@ -73,7 +73,6 @@ private:
   transport_coefficients::parameters transp_coeff_params; ///< Transport coefficients parameters
 
 
-  void add_buffer(double default_e);
 public:
 
   std::shared_ptr<FreezeOut<D>> freezePtr; ///< Object storing the freeze out data
@@ -122,7 +121,6 @@ public:
   void initialize_entropy_and_charge_densities();
   void initial_smoothing();
   void initialize_jets_bbmg();
-  void add_toy_jet();
 
   //============================================================================
   // smoothing

@@ -43,14 +43,6 @@ Output<D,TEOM>::Output(std::shared_ptr<Settings> settingsPtr_in,
 template<unsigned int D, template<unsigned int> class TEOM> Output<D,TEOM>::~Output(){}
 
 
-/// @brief Sets the path to the results directory.
-/// \param[in] path_to_results_directory Path to the results directory.
-template<unsigned int D, template<unsigned int> class TEOM>
-void Output<D,TEOM>::set_results_directory( string path_to_results_directory )
-{
-  output_directory = path_to_results_directory;
-}
-
 //------------------------------------------------------------------------------
 template<unsigned int D, template<unsigned int> class TEOM>
 void Output<D,TEOM>::print_system_state()

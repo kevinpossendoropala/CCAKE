@@ -46,7 +46,6 @@ public:
        std::shared_ptr<SPHWorkstation<D,TEOM>> ws_in);
   ~Output();
 
-  void set_results_directory( string path_to_results_directory );
   void print_system_state();
   void print_freeze_out(std::shared_ptr<FreezeOut<D>> freeze_out,double B, double Q, double S);
   void flush_freeze_out();  ///< Write buffered freeze-out lines to disk (call once at end)

@@ -556,8 +556,6 @@ double EquationOfState::s_terms_T( double Tt, double muBin,
 }
 
 
-// UNCOMMENTED BY C. PLUMBERG
-void EquationOfState::eosin(std::string type){}
 
 double EquationOfState::A() { return w()-s()*dwds(); }
 

@@ -59,7 +59,6 @@ private:
   void read_ICCING();
   void read_ccake();
   void read_freezein();
-  void read_dynamical();
 
   std::shared_ptr<Settings> settingsPtr; ///< Settings object containing configuration parsed from input file
   std::shared_ptr<SystemState<D>> systemPtr; ///< SystemState object containing the SPH System (linked list, particles, etc.)
