@@ -1,8 +1,7 @@
 #include "sph_workstation.h"
 #include "phase_profiler.h"
 //The cpp below needs to be included for the Kokkos lambda to be
-//properly compiled in the GPU
-#include "kernel.cpp"
+//properly compiled in the GPU (the SPH kernel is inline in kernel.h)
 #include "eom_default.cpp"
 #include "eom_cartesian.cpp"
 #include "transport_coefficients.cpp"
@@ -16,13 +15,6 @@ using namespace constants;
 namespace tc = ccake::transport_coefficients;
 
 namespace ccake{
-//Template instantiations
-template class SPHWorkstation<1,EoM_default>;
-template class SPHWorkstation<2,EoM_default>;
-template class SPHWorkstation<3,EoM_default>;
-template class SPHWorkstation<1,EoM_cartesian>;
-template class SPHWorkstation<2,EoM_cartesian>;
-template class SPHWorkstation<3,EoM_cartesian>;
 
 /// @brief Initialize the several components of the SPHWorkstation.
 /// @details SPHWorstation needs to load and initiualize a few objects before 
@@ -60,6 +52,9 @@ void SPHWorkstation<D,TEOM>::initialize()
   //----------------------------------------
   // set up transport coefficients
   transp_coeff_params = tc::setup_parameters(settingsPtr);
+  // File I/O cannot live inside setup_parameters (which is device-decorated), so
+  // the tabulated holographic sigma_B is loaded here; a no-op for other modes.
+  tc::load_holographic_sigmaB_table(transp_coeff_params, settingsPtr);
 
   //----------------------------------------
   // set up freeze out  at constant energy density
@@ -280,10 +275,15 @@ void SPHWorkstation<D, TEOM>::initialize_entropy_and_charge_densities()
       }
       p.input.e = p.thermo.e;
       p.efcheck = systemPtr->efcheck;
-      if ( p.input.e > systemPtr->efcheck && p.Freeze!=4 )	p.Freeze = 0;
+      // frozen at birth: below e_fo
+      const bool above_freeze_out = (p.input.e > systemPtr->efcheck);
+      if ( above_freeze_out && p.Freeze!=4 )	p.Freeze = 0;
 		  else
 		    {
-		    	p.Freeze = 4;
+		    	// Freeze = 5: frozen AT BIRTH (below e_fo at tau0, no surface element written). With
+		    	// source_reheat_frozen_at_birth a later source deposit may lift it back above e_fo
+		    	// (FreezeOut::check_freeze_out_status); every freeze test uses >= 4, so 5 acts as 4.
+		    	p.Freeze = settingsPtr->source_reheat_frozen_at_birth ? 5 : 4;
 		    	systemPtr->number_part_fo++;
 		    }
     }
@@ -310,10 +310,15 @@ void SPHWorkstation<D, TEOM>::initialize_entropy_and_charge_densities()
                       p.input.e, p.input.rhoB, p.input.rhoS, p.input.rhoQ );
       }
       p.efcheck = systemPtr->efcheck;
-      if ( p.input.e > systemPtr->efcheck && p.Freeze!=4 )	p.Freeze = 0;
+      // frozen at birth: below e_fo
+      const bool above_freeze_out = (p.input.e > systemPtr->efcheck);
+      if ( above_freeze_out && p.Freeze!=4 )	p.Freeze = 0;
 		  else
 		    {
-		    	p.Freeze = 4;
+		    	// Freeze = 5: frozen AT BIRTH (below e_fo at tau0, no surface element written). With
+		    	// source_reheat_frozen_at_birth a later source deposit may lift it back above e_fo
+		    	// (FreezeOut::check_freeze_out_status); every freeze test uses >= 4, so 5 acts as 4.
+		    	p.Freeze = settingsPtr->source_reheat_frozen_at_birth ? 5 : 4;
 		    	systemPtr->number_part_fo++;
 		    }
     }
@@ -1872,114 +1877,6 @@ void SPHWorkstation<D,TEOM>::locate_phase_diagram_point_sBSQ(Particle<D> & p, do
                { locate_phase_diagram_point_sBSQ(p, s_In, 0.0, 0.0, 0.0 ); }
 
 
-/// @brief Add a buffer of particles to the simulation.
-/// @details This function adds a buffer of particles to the simulation.
-/// At the moment, this function is only implemented for the ICCING initial
-/// conditions.
-///
-/// The buffer particles are added with a small energy density, and are placed
-/// in the grid points where particles are absent.
-/// @todo Details of this function still needs to be documented.
-template<unsigned int D, template<unsigned int> class TEOM>
-void SPHWorkstation<D, TEOM>::add_buffer(double default_e)
-{
-  if ( settingsPtr->IC_type != "ICCING" )
-  {
-    std::cerr << "WARNING: ADDING A BUFFER IS CURRENTLY ONLY DEFINED FOR ICCING"
-                 " INITIAL CONDITIONS.  NO BUFFER ADDED." << std::endl;
-    return;
-  }
-
-  double xmin  = settingsPtr->xmin;
-  double ymin  = settingsPtr->ymin;
-  double stepx = settingsPtr->stepx;
-  double stepy = settingsPtr->stepy;
-
-
-  // find maximum distance from origin first
-  double max_r = -1.0;
-  if ( settingsPtr->circular_buffer )
-  {
-    for ( Particle<D> & p : systemPtr->particles )
-      max_r = std::max( max_r, Norm(p.r) );
-    max_r *= 1.0 + settingsPtr->padding_thickness;
-
-    xmin = -stepx * ceil( max_r / stepx );
-    ymin = -stepy * ceil( max_r / stepy );
-
-    if ( max_r < 0.0 )
-    {
-      cout << "max_r = " << max_r << " cannot be less than zero!" << endl;
-      abort();
-    }
-  }
-
-
-  const int nx = 1 - 2*int(round(xmin/stepx));  // xmin is negative
-  const int ny = 1 - 2*int(round(ymin/stepy));  // ymin is negative
-  bool particle_exists[nx][ny];
-  for ( int ix = 0; ix < nx; ix++ )
-  for ( int iy = 0; iy < ny; iy++ )
-    particle_exists[ix][iy] = false;
-
-
-  // specify which particles are already in grid
-  int particle_count = 0;
-  for ( auto & p : systemPtr->particles )
-  {
-    int ix = int(round((p.r(0)-xmin)/stepx));
-    int iy = int(round((p.r(1)-ymin)/stepy));
-    particle_exists[ix][iy] = true;
-    particle_count++;
-  }
-
-  cout << "nx = " << nx << endl;
-  cout << "ny = " << ny << endl;
-  cout << "particle_count = " << particle_count << endl;
-
-  int checked_particles = 0;
-  int added_particles = 0;
-
-  // loop over all points to consider,
-  // initialize those not yet in grid
-  // (if in padded circle, for circular_buffer == true)
-  for ( int ix0 = 0; ix0 < nx; ix0++ )
-  for ( int iy0 = 0; iy0 < ny; iy0++ )
-  {
-    checked_particles++;
-
-    // don't initialize particles that already exist!
-    if ( particle_exists[ix0][iy0] ) continue;
-
-    double x0 = xmin + ix0*stepx;
-    double y0 = ymin + iy0*stepy;
-
-    // if circular_buffer == true,
-    // don't initialize particles outside padded circle!
-    if ( settingsPtr->circular_buffer && sqrt(x0*x0+y0*y0) > max_r ) continue;
-
-    Particle<D> p;
-
-    p.r(0)       = x0;
-    p.r(1)       = y0;
-    p.input.e    = default_e;
-    p.input.rhoB = 0.0;
-    p.input.rhoS = 0.0;
-    p.input.rhoQ = 0.0;
-    p.hydro.u(0) = 0.0;
-    p.hydro.u(1) = 0.0;
-
-    systemPtr->particles.push_back( p );
-    added_particles++;
-
-  }
-
-  cout << "checked_particles = " << checked_particles << endl;
-  cout << "added_particles = " << added_particles << endl;
-
-  return;
-}
-
 /// @brief Decides if the simulation should continue evolving.
 /// @todo This function should be aware if we have freeze out turned on or off.
 /// @details This function decides if the simulation should continue evolving.
@@ -2053,7 +1950,7 @@ void SPHWorkstation<D, TEOM>::advance_timestep( double dt, int rk_order )
     bbmg.propagate();
     //cout << "Finished jet propagate: " << endl;
   }
-  // Advance propagating sources once per timestep (no-op unless enabled).
+  // Advance the IC sources once per timestep (no-op unless enabled).
   // Must be outside the RK substep loop above so the source advances/depletes
   // exactly once per step; deposit_sources only reads the result during substeps.
   if (settingsPtr->source_type != "disabled") sourcePtr->advance_sources();
@@ -2071,181 +1968,6 @@ void SPHWorkstation<D, TEOM>::advance_timestep( double dt, int rk_order )
                             + to_string(sw.printTime()) + " s");
   return;
 }
-
-///@brief Reads in the external sources and define the external 
-///currents for the hydrodynamic evolution.
-///@details This function reads in the external sources and defines the
-///external currents for the hydrodynamic evolution. The external sources
-///are read from the external_sources file, but for now are hardcoded.
-///@tparam D The number of spatial dimensions.
-///@param t The current time of the simulation.
-template<unsigned int D, template<unsigned int> class TEOM>
-void SPHWorkstation<D, TEOM>::add_toy_jet()
-{
-  CREATE_VIEW(device_, systemPtr->cabana_particles);
-  auto simd_policy = Cabana::SimdPolicy<VECTOR_LENGTH,ExecutionSpace>(0, systemPtr->cabana_particles.size());
-  double hT = settingsPtr->hT;
-  double t = systemPtr->t;
-  double dt = settingsPtr->dt;
-  double n_particles = systemPtr->cabana_particles.size();
-  double source_energy = 300.*GeVtofm;
-  double source_rhob = 1./3.;
-  double source_rhos = 0.0;
-  double source_rhoq = 2.*(electric_charge)/3.;
-  milne::Vector<double,D> source_momentum;
-  double jet_position_1[D];
-  jet_position_1[0] = +(t-0.6);
-  jet_position_1[1] = 0;
-  if constexpr (D == 3) jet_position_1[2] = 0.0;
-  double jet_position_2[D];
-  jet_position_2[0] = -(t-0.6);
-  jet_position_2[1] = 0;
-  if constexpr (D == 3) jet_position_2[2] = 0.0;
-  //30 degrees in radians
-  double jet_angle = 45.*pi/180.;
-  
-  double source_entropy1 = 0.0;
-  auto get_source_entropy1 = KOKKOS_LAMBDA(const int i, double &local_source_entropy)
-  {
-    double r[D];
-    for (int idir=0; idir<D; ++idir)
-      r[idir] = device_position(i, idir);
-    double d1 = SPHkernel<D>::distance(r,jet_position_1);
-    double kern1 = SPHkernel<D>::kernel(d1,hT);
-
-    local_source_entropy += device_sph_mass(i, densities_info::s)
-          *device_thermo(i, ccake::thermo_info::s)
-          *kern1/device_hydro_scalar(i, ccake::hydro_info::sigma_lab);
-  };
-  Kokkos::parallel_reduce("source_entropy",n_particles, get_source_entropy1, source_entropy1);
-  Kokkos::fence();
-  std::cout << "source_entropy1 = " << source_entropy1 << std::endl;
-  double source_entropy2 = 0.;
-  auto get_source_entropy2 = KOKKOS_LAMBDA(const int i, double &local_source_entropy)
-  {
-    double r[D];
-    for (int idir=0; idir<D; ++idir)
-      r[idir] = device_position(i, idir);
-    double d2 = SPHkernel<D>::distance(r,jet_position_2);
-    double kern2 = SPHkernel<D>::kernel(d2,hT);
-
-    local_source_entropy += device_sph_mass(i, densities_info::s)
-          *device_thermo(i, ccake::thermo_info::s)
-          *kern2/device_hydro_scalar(i, ccake::hydro_info::sigma_lab);
-  };
-  Kokkos::parallel_reduce("source_entropy",n_particles, get_source_entropy2, source_entropy2);
-  Kokkos::fence();
-
-double s0 = 200.0;
-double x_threshold = 0.3;
-//half cone opening lenght calculated using the jet angle
-double opening_length1 = std::max(jet_position_1[0] * tan(jet_angle), x_threshold);
-double opening_length2 = std::max(jet_position_2[0] * tan(jet_angle), x_threshold);
-// if jet_position_1[0] * tan(jet_angle) > x_threshold
-if (jet_position_1[0] * tan(jet_angle) > x_threshold)
-  std::cout << "opening_length1 = " << opening_length1 << " x_threshold = " << x_threshold << std::endl;
-
-auto add_toy_jet_terms = KOKKOS_LAMBDA(const int is, const int ia) {
-    double r[D];
-    for (int idir = 0; idir < D; ++idir)
-        r[idir] = device_position.access(is, ia, idir);
-
-    double d1_sq = 0.0, d2_sq = 0.0;
-    for (int idir = 0; idir < D; ++idir) {
-      double diff1 = r[idir] - jet_position_1[idir];
-      double diff2 = r[idir] - jet_position_2[idir];
-      d1_sq += diff1 * diff1;
-      d2_sq += diff2 * diff2;
-    }
-    double d1 = sqrt(d1_sq);
-    double d2 = sqrt(d2_sq);
-    // 
-
-    // Check if the particle is within the jet's influence
-    bool in_cone_1 = d1 < x_threshold;
-    bool in_cone_2 = d2 < x_threshold;
-    //reset sources
-    device_hydro_scalar.access(is, ia, ccake::hydro_info::j0_ext) = 0.0;
-    for (int idir=0; idir<D; ++idir)
-      device_hydro_vector.access(is, ia, ccake::hydro_info::j_ext,idir) = 0.0;
-
-    // Gaussian kernel
-  if (in_cone_1) {
-      double sigma_x = x_threshold;
-      double sigma_y = x_threshold;
-      double Eloss1 = source_energy * source_entropy1/s0;
-      //two 1D splines
-      double kernel1 = SPHkernel<D>::kernel(d1, sigma_x);
-      device_hydro_scalar.access(is, ia, ccake::hydro_info::j0_ext) += Eloss1 * kernel1 / t / 1.;
-      device_hydro_vector.access(is, ia, ccake::hydro_info::j_ext, 0) += Eloss1 * kernel1 / t / 1.;
-      //std::cout << "in cone 1" << std::endl;
-      //std::cout << "dx1 = " << dx1 << " dy1 = " << dy1 << std::endl;
-      //std::cout << "opening_length1 = " << opening_length1 << " x_threshold = " << x_threshold << std::endl;
-      //std::cout << "Eloss1 = " << Eloss1 << " kernel1 = " << kernel1 << std::endl;
-  }
-  if (in_cone_2) {
-        double sigma_x = x_threshold;
-        double sigma_y = x_threshold;
-        double Eloss2 = source_energy * source_entropy2/s0;
-        //two 1D splines
-        double kernel2 = SPHkernel<D>::kernel(d2, sigma_x);
-        //device_hydro_scalar.access(is, ia, ccake::hydro_info::j0_ext) += Eloss2 * kernel2 / t / 1.;
-        //device_hydro_vector.access(is, ia, ccake::hydro_info::j_ext, 0) += -Eloss2 * kernel2 / t / 1.;
-        //std::cout << "in cone 2" << std::endl;
-        //std::cout << "dx2 = " << dx2 << " dy2 = " << dy2 << std::endl;
-        //std::cout << "opening_length2 = " << opening_length2 << " x_threshold = " << x_threshold << std::endl;
-        //std::cout << "Eloss2 = " << Eloss2 << " kernel2 = " << kernel2 << std::endl;
-  }
-
-
-////only accounts for the source1 in the x direction
-//    double r[D];
-//    //reset sources 
-//    device_hydro_scalar.access(is, ia, ccake::hydro_info::j0_ext) = 0.0;
-//    for (int idir=0; idir<D; ++idir)
-//      device_hydro_vector.access(is, ia, ccake::hydro_info::j_ext,idir) = 0.0;
-//
-//
-//    for (int idir = 0; idir < D; ++idir)
-//        r[idir] = device_position.access(is, ia, idir);
-//
-//    double d1 = SPHkernel<D>::distance(r,jet_position_1);
-//    double h_source= 0.5;
-//    double kern1 = SPHkernel<D>::kernel(d1,h_source);
-//    double Eloss1 = source_energy * source_entropy1/s0;
-//    if (d1 < 2.*h_source){
-//      device_hydro_scalar.access(is, ia, ccake::hydro_info::j0_ext) += Eloss1 * kern1 / t / 0.01;
-//      device_hydro_vector.access(is, ia, ccake::hydro_info::j_ext, 0) += Eloss1 * kern1 / t /0.01;
-//    }
-//    double d2 = SPHkernel<D>::distance(r,jet_position_2);
-//    double kern2 = SPHkernel<D>::kernel(d2,h_source);
-//    double Eloss2 = source_energy * source_entropy2/s0;
-//    if (d2 < 2.*h_source){
-//      device_hydro_scalar.access(is, ia, ccake::hydro_info::j0_ext) += Eloss2 * kern2 / t / 0.01;
-//      device_hydro_vector.access(is, ia, ccake::hydro_info::j_ext, 0) += -Eloss2 * kern2 / t / 0.01;
-//    }
-//
-  };
-
-  Cabana::simd_parallel_for(simd_policy,add_toy_jet_terms, "add_toy_jet");
-  Kokkos::fence();
-  
-  //calculate total energy loss with parallel reduce
-  //auto get_total_energy_loss = KOKKOS_LAMBDA(const int i, double &local_total_energy_loss)
-  //{
-  //  double sph_mass = device_sph_mass(i, densities_info::s);
-  //  double sigma = device_hydro_scalar(i, ccake::hydro_info::sigma);
-  //  double j0_ext = device_hydro_scalar(i, ccake::hydro_info::j0_ext);
-  //  local_total_energy_loss += sph_mass* j0_ext/sigma;
-  //
-  //};
-  //Kokkos::parallel_reduce("total_energy_loss",n_particles, get_total_energy_loss, total_energy_loss);
-  //Kokkos::fence();
-  //std::cout << "total_energy_loss = " << total_energy_loss*(1./GeVtofm) << " GeV " << std::endl;
-};
-
-
-
 
 ///@brief Function to regulate negative extensive entropy.
 ///@details This function is responsible for regulating hydrodynamic evolution,
@@ -2822,3 +2544,15 @@ void SPHWorkstation<1, EoM_cartesian>::smooth_all_particle_gradients(double time
 }
 
 }; //namespace ccake
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class SPHWorkstation<1,EoM_default>;
+template class SPHWorkstation<2,EoM_default>;
+template class SPHWorkstation<3,EoM_default>;
+template class SPHWorkstation<1,EoM_cartesian>;
+template class SPHWorkstation<2,EoM_cartesian>;
+template class SPHWorkstation<3,EoM_cartesian>;
+}

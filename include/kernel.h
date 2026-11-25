@@ -10,24 +10,136 @@ namespace ccake{
 /// @brief A class containing static functions for the SPH kernels.
 /// @details This class provides methods for calculating the SPH kernel and
 /// its gradient, as well as calculating the distance between two points.
+/// Everything is defined here, inline, so that every file that uses the kernel
+/// sees the same definitions (on the host and on a device).
 /// @tparam D The dimension of the space.
 template<unsigned int D>
 class SPHkernel
 {
 private:
-  static const double knorm, knorm2, kgrad, kgrad2;
+  /// Cubic spline normalizations: kernel for \f$ q < 1 \f$ and \f$ 1 < q < 2 \f$,
+  /// gradient for \f$ 1 < q < 2 \f$ and \f$ q < 1 \f$.
+  static constexpr double knorm  = D == 1 ? 2./3.  : D == 2 ? 10./(7*M_PI)    : 1./M_PI;
+  static constexpr double knorm2 = D == 1 ? 1./6.  : D == 2 ? 5./(14.*M_PI)   : 1./(4*M_PI);
+  static constexpr double kgrad  = D == 1 ? -1./2. : D == 2 ? -15./(14.*M_PI) : -3./(4.*M_PI);
+  static constexpr double kgrad2 = D == 1 ? 1.     : D == 2 ? 15./(7.*M_PI)   : 3./(2.*M_PI);
 
 public:
 
-  KOKKOS_FUNCTION static double kernel(double distance, double hT);
-  KOKKOS_FUNCTION static double kernel(const double* r1, const double* r2,
-                                       double hT, double hEta);
-  KOKKOS_FUNCTION static void gradKernel(double const* rel_dist, double r,
-                                         double h, double* grad);
-  KOKKOS_FUNCTION static void gradKernel(const double* rel_sep,
-                                         const double* pos_a, const double* pos_b,
-                                         double hT, double hEta, double* grad);
-  KOKKOS_FUNCTION static double distance(const double* r1, const double* r2);
+  /// @brief Calculates the SPH kernel value
+  /// @details This function calculates the SPH kernel for a given distance and
+  /// smoothing length.
+  /// @param distance The distance between two particles.
+  /// @param hT The smoothing length.
+  /// @return The SPH kernel value.
+  KOKKOS_INLINE_FUNCTION static double kernel(double distance, double hT)
+  {
+    double norm       = knorm/Kokkos::pow(hT,D);
+    double norm2      = knorm2/Kokkos::pow(hT,D);
+    double q = distance/hT;
+    if ( q >= 2.0 )
+      return 0.0;
+    if ( q >= 1.0 )
+      return norm2*(2.0-q)*(2.0-q)*(2.0-q);
+
+    double qq=q*q;
+    return norm*(1 - 1.5*qq + 0.75*q*qq);
+  }
+
+  /// @brief The kernel between two positions, with separate transverse and
+  /// longitudinal smoothing lengths.
+  /// @details In 3D this is the factorized kernel W_2D(r_perp, hT) * W_1D(|delta eta|, hEta).
+  /// In 1D and 2D hEta is not used: the kernel of the D-dimensional distance.
+  KOKKOS_INLINE_FUNCTION static double kernel(const double* r1, const double* r2,
+                                              double hT, double hEta)
+  {
+    if constexpr (D == 3)
+    {
+      double r_perp = SPHkernel<2>::distance(r1, r2);
+      double deta   = SPHkernel<1>::distance(&r1[2], &r2[2]);
+      return SPHkernel<2>::kernel(r_perp, hT) * SPHkernel<1>::kernel(deta, hEta);
+    }
+    else
+      return SPHkernel<D>::kernel(SPHkernel<D>::distance(r1, r2), hT);
+  }
+
+  /// @brief Calculates the gradient of the kernel function
+  /// @details This function calculates the gradient of the SPH kernel function
+  /// for a given relative distance and smoothing length.
+  /// @param rel_dist An array containing the relative distance between two
+  /// particles, i.e. ra-rb
+  /// @param r Norm of the relative distance array above
+  /// @param h SPH smoothing length
+  /// @param grad The array to store the gradient of the kernel
+  KOKKOS_INLINE_FUNCTION static void gradKernel(double const* rel_dist, double r,
+                                                double h, double* grad)
+  {
+    double norm_grad  = kgrad/pow(h,D+1);
+    double norm_grad2 = kgrad2/pow(h,D+1);
+    double q = r/h;
+
+    if ( q >= 2.0 )
+    {
+      for (int idir=0; idir<D; idir++)
+        grad[idir] = 0.0;
+      return;
+    }
+    if ( q >= 1.0 )
+    {
+      for (int idir=0; idir<D; idir++)
+        grad[idir] = (norm_grad/r)*(2.0-q)*(2.0-q)*rel_dist[idir];
+      return;
+    }
+    for (int idir=0; idir<D; idir++)
+        grad[idir] = norm_grad2*( 1.5*q - 2 )*rel_dist[idir]/h;
+    return;
+  }
+
+  /// @brief The kernel gradient, with separate transverse and longitudinal
+  /// smoothing lengths.
+  /// @details In 3D this is the gradient of the factorized kernel. In 1D and 2D
+  /// hEta is not used: the gradient of the kernel of the D-dimensional distance.
+  KOKKOS_INLINE_FUNCTION static void gradKernel(const double* rel_sep,
+                                                const double* pos_a, const double* pos_b,
+                                                double hT, double hEta, double* grad)
+  {
+    if constexpr (D == 3)
+    {
+      double zero2[2] = {0.0, 0.0};
+      double rel_perp[2] = {rel_sep[0], rel_sep[1]};
+      double r_perp = SPHkernel<2>::distance(rel_perp, zero2);
+      double deta   = SPHkernel<1>::distance(&rel_sep[2], &zero2[0]);
+      double gradK_2D[2], gradK_1D;
+      SPHkernel<2>::gradKernel(rel_perp, r_perp, hT, gradK_2D);
+      SPHkernel<1>::gradKernel(&rel_sep[2], deta, hEta, &gradK_1D);
+      double W_2D = SPHkernel<2>::kernel(r_perp, hT);
+      double W_1D = SPHkernel<1>::kernel(deta, hEta);
+      grad[0] = gradK_2D[0] * W_1D;
+      grad[1] = gradK_2D[1] * W_1D;
+      grad[2] = W_2D * gradK_1D;
+    }
+    else
+    {
+      double r = SPHkernel<D>::distance(pos_a, pos_b);
+      SPHkernel<D>::gradKernel(rel_sep, r, hT, grad);
+    }
+  }
+
+  /// @brief Calculates the Euclidean distance between two points.
+  /// @details This function calculates the Euclidean distance between two points
+  /// in D-dimensional space.
+  /// @param r1 The coordinates of the first point.
+  /// @param r2 The coordinates of the second point.
+  /// @return The Euclidean distance between the two points.
+  KOKKOS_INLINE_FUNCTION static double distance(const double* r1, const double* r2)
+  {
+    double d=0;
+    for (int idir=0; idir<D; ++idir){
+      double diff = r1[idir]-r2[idir];
+      d += diff*diff;
+    }
+    return sqrt(d);
+  }
 };
 
 }

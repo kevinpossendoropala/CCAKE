@@ -46,7 +46,6 @@ public:
        std::shared_ptr<SPHWorkstation<D,TEOM>> ws_in);
   ~Output();
 
-  void set_results_directory( string path_to_results_directory );
   void print_system_state();
   void print_freeze_out(std::shared_ptr<FreezeOut<D>> freeze_out,double B, double Q, double S);
   void flush_freeze_out();  ///< Write buffered freeze-out lines to disk (call once at end)
@@ -54,6 +53,7 @@ public:
   void buffer_conservation_line();      ///< Append one conservation line to in-memory buffer
   void flush_conservation(const std::string& path); ///< Write buffered conservation data to disk (call once at end)
   void buffer_causality_line();         ///< Append one per-timestep causality summary line (cheap; needs check_causality)
+  void print_jet_final_to_txt(const std::string& path); ///< One row per BBMG parton at the end of the run (input to fragment_jets)
   void flush_causality(const std::string& path);    ///< Write buffered causality summary to disk (call once at end)
   void print_causality_minimal_to_txt();            ///< per-particle causality-diagnostics dump (strided snapshots)
   std::string get_freeze_out_filename(){return output_directory + "/freeze_out.dat";}

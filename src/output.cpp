@@ -4,13 +4,6 @@ using namespace constants;
 using namespace ccake;
 
 
-//Template instantiations
-template class Output<1, EoM_default>;
-template class Output<2, EoM_default>;
-template class Output<3, EoM_default>;
-template class Output<1, EoM_cartesian>;
-template class Output<2, EoM_cartesian>;
-template class Output<3, EoM_cartesian>;
 
 
 // Constructors and destructors.
@@ -49,14 +42,6 @@ Output<D,TEOM>::Output(std::shared_ptr<Settings> settingsPtr_in,
 
 template<unsigned int D, template<unsigned int> class TEOM> Output<D,TEOM>::~Output(){}
 
-
-/// @brief Sets the path to the results directory.
-/// \param[in] path_to_results_directory Path to the results directory.
-template<unsigned int D, template<unsigned int> class TEOM>
-void Output<D,TEOM>::set_results_directory( string path_to_results_directory )
-{
-  output_directory = path_to_results_directory;
-}
 
 //------------------------------------------------------------------------------
 template<unsigned int D, template<unsigned int> class TEOM>
@@ -158,13 +143,13 @@ void Output<D,TEOM>::print_system_state_to_txt()
         out << p.hydro.gamma << " " //36
         << p.Freeze << " " //37
         << p.get_current_eos_name() << " " //38
-        << p.hydro.causality << " "
-        << p.hydro.knudsen_diffusion_B         << " " //39
-        << p.hydro.knudsen_diffusion_S         << " " //40
-        << p.hydro.knudsen_diffusion_Q         << " " //41
-        << p.hydro.inverse_reynolds_diffusion_B << " " //42
-        << p.hydro.inverse_reynolds_diffusion_S << " " //43
-        << p.hydro.inverse_reynolds_diffusion_Q << " " << "\n"; //44
+        << p.hydro.causality << " " //39
+        << p.hydro.knudsen_diffusion_B         << " " //40
+        << p.hydro.knudsen_diffusion_S         << " " //41
+        << p.hydro.knudsen_diffusion_Q         << " " //42
+        << p.hydro.inverse_reynolds_diffusion_B << " " //43
+        << p.hydro.inverse_reynolds_diffusion_S << " " //44
+        << p.hydro.inverse_reynolds_diffusion_Q << "\n"; //45
   }
 
   out << std::flush;
@@ -174,12 +159,11 @@ void Output<D,TEOM>::print_system_state_to_txt()
   return;
 }
 
-/// @brief Outputs data from the uncoupled jet system to a dat file
-/// @details This function outputs all necessary jet information for post processing. Each jet
-/// is its own row, while each column is its own variable for that jet. The columns are as
-/// follows: Index, time, BBMG line integral, initial density of each jet, angle the jet 
-/// started, x position, and y position. All quantities are left in terms of fm and will be 
-/// converted to MeV when necessary in post processing.
+/// @brief Outputs the current state of every BBMG jet parton to jet_state_<N>.dat
+/// @details One row per parton. Columns (D=3; eta, eta0 and rapidity are omitted in 2D):
+/// id, tau, remaining energy [GeV], initial p/T, PID (synthetic index), current x y eta,
+/// "(x0 y0 eta0)" production point (literal parentheses), phi, rapidity, flavor (PDG id,
+/// 0 if unknown; appended last so position-based readers keep working).
 template<unsigned int D, template<unsigned int> class TEOM>
 void Output<D,TEOM>::print_jet_state_to_txt()
 {
@@ -207,12 +191,46 @@ void Output<D,TEOM>::print_jet_state_to_txt()
         out << ")" << " ";
         out << jets.phi << " ";
         if constexpr (D == 3) out << jets.rapidity << " ";
+        out << jets.flavor << " ";
         out << "\n";
        }
   out << std::flush;
   out.close();
   return;
 }
+
+/// @brief Writes the final state of every BBMG jet parton (called once, end of run)
+/// @details Written whenever jets are enabled, independent of output.jet_evolution.
+/// One row per parton, in input order (row i = line i of the jets input file when
+/// auto_partner is false). Energies in GeV, positions in fm, T in MeV.
+/// status: 0 = still inside the medium at the end of the run,
+///         1 = exited (local T dropped to <= 150 MeV; position frozen there),
+///         2 = absorbed (remaining energy reached 0).
+/// This is the input of utils/fragment_jets in the chain.
+template<unsigned int D, template<unsigned int> class TEOM>
+void Output<D,TEOM>::print_jet_final_to_txt(const std::string& path)
+{
+  ofstream out( path.c_str() );
+  out << "# id pdg E0[GeV] E_final[GeV] x0 y0 eta0 x y eta tau_final tau_stop phi rapidity T_final[MeV] status\n";
+  out << "# status: 0=active at end of run, 1=exited (T<=150 MeV), 2=absorbed (E_final<=0)\n";
+  out.precision(12);
+  int iJet = 0;
+  for ( const auto & jet : wsPtr->bbmg.jetInfo_host )
+  {
+    const int status = (jet.total_energy <= 0.0) ? 2
+                     : ((jet.tau_stop >= 0.0 || !(jet.T > BBMG<D>::decoherence_temperature_MeV)) ? 1 : 0);
+    const double eta      = (D == 3) ? jet.r[2]     : 0.0;
+    const double eta0     = (D == 3) ? jet.eta      : 0.0;
+    const double rapidity = (D == 3) ? jet.rapidity : 0.0;
+    out << iJet++ << " " << jet.flavor << " " << jet.E0 << " " << jet.total_energy << " "
+        << jet.x << " " << jet.y << " " << eta0 << " "
+        << jet.r[0] << " " << jet.r[1] << " " << eta << " "
+        << systemPtr->t << " " << jet.tau_stop << " "
+        << jet.phi << " " << rapidity << " " << jet.T << " " << status << "\n";
+  }
+  out.close();
+}
+
 
 /// @brief Outputs data of the system state to an HDF5 file.
 /// @tparam D The dimensionality of the simulation.
@@ -604,4 +622,16 @@ void Output<2,EoM_cartesian>::print_freeze_out(std::shared_ptr<FreezeOut<2>> fre
   fo_particles_buffered += count;
   formatted_output::detail("Buffered " + std::to_string(count) + " freeze-out particles.");
   return;
+}
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class Output<1, EoM_default>;
+template class Output<2, EoM_default>;
+template class Output<3, EoM_default>;
+template class Output<1, EoM_cartesian>;
+template class Output<2, EoM_cartesian>;
+template class Output<3, EoM_cartesian>;
 }

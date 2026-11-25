@@ -1,0 +1,33 @@
+# Checks that run on the files you are about to commit.
+#
+#   pip install pre-commit      (once)
+#   pre-commit install          (once per clone)
+#
+# From then on `git commit` runs them; `pre-commit run --all-files` runs them on
+# everything. The CI job "lint" runs the same hooks.
+#
+# The hooks only look at the test and CI files. The C++ sources and the older
+# Python scripts are not reformatted by anything here.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        files: ^(ci|tests)/
+      - id: ruff-format
+        files: ^(ci|tests)/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: &infrastructure ^(ci|tests|\.github)/|^(CONTRIBUTING\.md|pyproject\.toml|codecov\.yml|\.pre-commit-config\.yaml|unit_tests/CMakeLists\.txt)$
+        exclude: &data \.(dat|h5|patch)$
+      - id: end-of-file-fixer
+        files: *infrastructure
+        exclude: *data
+      - id: check-yaml
+        files: ^(\.github|tests)/|^(codecov\.yml|\.pre-commit-config\.yaml)$
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]

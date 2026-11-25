@@ -1,0 +1,29 @@
+# Settings for Codecov (https://docs.codecov.com/docs/codecov-yaml).
+#
+# Coverage is judged on the lines a pull request changes ("patch"), not on the
+# total of the repository ("project").
+coverage:
+  status:
+    # The total is shown for information and never fails a pull request.
+    project:
+      default:
+        informational: true
+    # The lines a pull request adds or changes. No target has been chosen yet,
+    # so this is informational too. To enforce one, replace the line below by
+    #     target: 80%      (or whatever the maintainers decide)
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, files"
+  require_changes: false
+
+# Only CCAKE's own sources count; the report is already limited to src/ and include/.
+ignore:
+  - "unit_tests"
+  - "tests"
+  - "utilities"
+  - "eigen"
+  - "misc"
+  - "plotting_scripts"

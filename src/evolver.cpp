@@ -2,10 +2,6 @@
 
 using namespace ccake;
 
-//Template instantiations
-template class Evolver<1>;
-template class Evolver<2>;
-template class Evolver<3>;
 
 /// @brief Create object responsible for controlling hydro evolution.
 /// @details This constructor sets up the evolver object with pointers to
@@ -315,7 +311,8 @@ void Evolver<D>::update_rk4(double dt){
         device_extensive.access(is, ia, densities_info::rhoB) = extensive_rhoB;
         device_extensive.access(is, ia, densities_info::rhoS) = extensive_rhoS;
         device_extensive.access(is, ia, densities_info::rhoQ) = extensive_rhoQ;
-        device_hydro_scalar.access(is, ia, hydro_info::bulk) = bulk;
+        // hydro_info::bulk is not set here: it is Pi = extensive_bulk*sigma,
+        // recomputed at the next derivative evaluation, as after an RK2 step.
         device_contribution_to_total_Ez.access(is, ia) = particles_Ez;
         for (int idir=0; idir<D; ++idir){
           device_position.access(is, ia, idir) = r(idir);
@@ -524,39 +521,48 @@ void Evolver<D>::advance_timestep_rk4( double dt,
       set_current_timestep_quantities();
       allocate_k_values();
       double t0      = systemPtr->t;
+      // step_rk(h, t0, f) evaluates the derivatives at the current state and
+      // then moves the state to y0 + h*f, at time t0 + h. update_k(n) adds
+      // w_n times the derivatives evaluated last, so it follows the step_rk
+      // call that evaluated stage n.
       ////////////////////////////////////////////
-      //    first step
+      //    first step: k1 = f(t0, y0)
       ////////////////////////////////////////////
       formatted_output::report("RK(n=4) evolution, step 1");
       step_rk(.5*dt, t0, time_derivatives_functional);
-      
-
-      ////////////////////////////////////////////
-      //    second step
-      ////////////////////////////////////////////
-      formatted_output::report("RK(n=4) evolution, step 2");
-      step_rk(0.5*dt, t0, time_derivatives_functional);
       update_k(1);
 
       ////////////////////////////////////////////
-      //    third step
+      //    second step: k2 = f(t0 + dt/2, y0 + dt/2 k1)
       ////////////////////////////////////////////
-      formatted_output::report("RK(n=4) evolution, step 3");
+      formatted_output::report("RK(n=4) evolution, step 2");
       step_rk(0.5*dt, t0, time_derivatives_functional);
       update_k(2);
 
       ////////////////////////////////////////////
-      //    fourth step
+      //    third step: k3 = f(t0 + dt/2, y0 + dt/2 k2)
       ////////////////////////////////////////////
-      formatted_output::report("RK(n=4) evolution, step 4");
+      formatted_output::report("RK(n=4) evolution, step 3");
       step_rk(dt, t0, time_derivatives_functional);
       update_k(3);
 
+      ////////////////////////////////////////////
+      //    fourth step: k4 = f(t0 + dt, y0 + dt k3)
+      ////////////////////////////////////////////
+      formatted_output::report("RK(n=4) evolution, step 4");
       time_derivatives_functional();
-      update_k(3);
+      update_k(4);
 
       update_rk4(dt);
 
       return;
 }
 
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class Evolver<1>;
+template class Evolver<2>;
+template class Evolver<3>;
+}

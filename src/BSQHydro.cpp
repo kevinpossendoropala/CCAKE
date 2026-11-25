@@ -5,13 +5,6 @@
 
 using namespace ccake;
 
-//Template instantiations
-template class BSQHydro<1,EoM_default>;
-template class BSQHydro<2,EoM_default>;
-template class BSQHydro<3,EoM_default>;
-template class BSQHydro<1,EoM_cartesian>;
-template class BSQHydro<2,EoM_cartesian>;
-template class BSQHydro<3,EoM_cartesian>;
 
 /// @brief Constructor for the BSQHydro class.
 /// @details This constructor initializes a BSQHydro object with the given
@@ -863,4 +856,22 @@ void BSQHydro<D,TEOM>::run()
     outPtr->flush_conservation(out_dir + "/conservation.dat");
   if (settingsPtr->check_causality)
     outPtr->flush_causality(out_dir + "/causality_summary.dat");
+  // Final state of the BBMG partons, input for the fragmentation post-processor
+  if (settingsPtr->jets_type != "disabled")
+  {
+    wsPtr->bbmg.copy_device_to_host_BBMG();
+    outPtr->print_jet_final_to_txt(out_dir + "/jet_final.dat");
+  }
+}
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class BSQHydro<1,EoM_default>;
+template class BSQHydro<2,EoM_default>;
+template class BSQHydro<3,EoM_default>;
+template class BSQHydro<1,EoM_cartesian>;
+template class BSQHydro<2,EoM_cartesian>;
+template class BSQHydro<3,EoM_cartesian>;
 }

@@ -78,7 +78,7 @@ namespace ccake
 
   using freeze_array = Cabana::AoSoA<FRZ,DeviceType,VECTOR_LENGTH>;
   using freeze_results = Cabana::AoSoA<ResultsTypes,DeviceType,VECTOR_LENGTH>;
-  using SerialHost = Kokkos::Device<Kokkos::Serial, Kokkos::HostSpace>;
+  using SerialHost = Kokkos::HostSpace; // Cabana>=0.8.0: AoSoA needs a memory space
   using freeze_results_h = Cabana::AoSoA<ResultsTypes,SerialHost,VECTOR_LENGTH>;
   using mask_type = Cabana::AoSoA<Cabana::MemberTypes<bool>,DeviceType,VECTOR_LENGTH>;
 
@@ -489,6 +489,10 @@ class FreezeOut
           } else {                                // otherwise, particle is not ready to freeze-out
             device_freeze.access(is,ia)=0;
           }
+          break;
+        case 5:                                   // frozen at birth (only exists with source_reheat_frozen_at_birth):
+          if ( e > efcheck )                      // a source deposit lifted it back above e_fo, so it is fluid
+            device_freeze.access(is,ia) = 0;         // again and will write a surface element when it cools
           break;
         default:
           //Any other case, particle is already frozen out

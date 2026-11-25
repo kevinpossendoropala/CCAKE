@@ -1,0 +1,51 @@
+---
+# Smoke-test configuration: ideal 1+1D run with the conformal equation of state.
+# Same physics settings as input/config_long.yaml; the initial condition comes from
+# utilities/long_ic_generator.py. run_smoke.py fills in @IC_FILE@.
+initial_conditions:
+  type: "ccake"
+  file: "@IC_FILE@"
+  t0: 1.0
+  dimension: 1
+  input_as_entropy: false
+parameters:
+  dt: 0.001
+  h_T: 0.1
+  h_eta: 0.1
+  rk_order: 2
+  kernel_type: "cubic_spline"
+  energy_cutoff: 0.0
+  buffer_particles:
+    enabled: false
+    circular: false
+    padding_thickness: .1
+eos:
+  online_inverter_enabled: true
+  preinverted_eos_path: "inverted_eos.h5"
+  type: "conformal"
+  path: "EoS/Houston"
+particlization:
+  enabled: false
+  type: "fixed_T"
+  T: 150.00000
+hydro:
+  baryon_charge_enabled: false
+  strange_charge_enabled: false
+  electric_charge_enabled: false
+  viscous_parameters:
+    shear:
+      mode: "disabled"
+      constant_eta_over_s: 0.0
+      relaxation_mode: "default"
+    bulk:
+      mode: "constant"
+      constant_zeta_over_s: 0.0
+      cs2_dependent_zeta_A: 0.0
+      cs2_dependent_zeta_p: 0.0
+      relaxation_mode: "default"
+      modulate_with_tanh: false
+    # no diffusion and no source block: both are optional (default "disabled")
+output:
+  print_conservation_state: true
+  hdf_evolution: false
+  txt_evolution: true

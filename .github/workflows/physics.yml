@@ -1,0 +1,152 @@
+# Physics checks: full runs of CCAKE compared with analytic solutions and with reference
+# runs (tests/physics/README.md). Nightly, by hand, and on pull requests that change the
+# code. Not part of "CI result": a check fails only on a crash, a missing output, a wrong
+# input checksum or a quantity outside a tolerance of tests/physics/tolerances.yaml.
+#
+# Schedules run only on the default branch.
+name: Physics checks
+
+on:
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "include/**"
+      - "CMakeLists.txt"
+      - "ci/install-deps.sh"
+      - "ci/*.patch"
+      - "tests/physics/**"
+      - ".github/workflows/physics.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physics-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CC: gcc-13
+      CXX: g++-13
+      DEPS_PREFIX: /home/runner/ccake-deps
+      CCACHE_DIR: /home/runner/.cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 300M
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libhdf5-dev libgsl-dev libyaml-cpp-dev ccache
+
+      # The same cache as the gcc-13 job of ci.yml.
+      - name: Restore Kokkos and Cabana
+        id: deps
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-ubuntu-24.04-gcc-13-${{ hashFiles('ci/install-deps.sh', 'ci/*.patch') }}
+
+      - name: Build Kokkos and Cabana
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ci/install-deps.sh "$DEPS_PREFIX"
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-gcc-13-${{ github.sha }}
+          restore-keys: ccache-gcc-13-
+
+      - name: Build ccake
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$DEPS_PREFIX" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCCAKE_ARCH=x86-64-v3
+          cmake --build build -j "$(nproc)" --target ccake
+
+      # Kokkos and Cabana are linked statically; the check jobs install the system libraries.
+      - name: Keep the executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ccake
+          retention-days: 3
+          path: build/ccake
+
+  check:
+    name: ${{ matrix.check }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check: gubser_bsq
+            minutes: 240
+          - check: pbpb_2d
+            minutes: 90
+          - check: auau77_3d
+            minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libhdf5-dev libgsl-dev libyaml-cpp-dev libgomp1 python3-numpy python3-yaml
+
+      - name: Get the executable
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ccake
+          path: bin
+
+      # Downloaded inputs (the Houston EoS from Zenodo) are kept between runs.
+      - name: Restore inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccake-physics
+          key: physics-inputs-${{ matrix.check }}-${{ hashFiles('tests/physics/checks.yaml') }}
+          # the files are kept by checksum, so an older cache is still good
+          restore-keys: physics-inputs-${{ matrix.check }}-
+
+      - name: Run and compare
+        env:
+          CHECK: ${{ matrix.check }}
+        run: |
+          chmod +x bin/ccake
+          mkdir -p ~/.cache/ccake-physics   # so the cache step finds it even with no download
+          python3 tests/physics/run_check.py --ccake bin/ccake --work runs --threads "$(nproc)" \
+            --report "$GITHUB_STEP_SUMMARY" "$CHECK"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: physics-${{ matrix.check }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            runs/*/result.json
+            runs/*/ccake.log
+            runs/*/config.yaml
+            runs/*/results/conservation.dat
+            runs/*/results/freeze_out.dat

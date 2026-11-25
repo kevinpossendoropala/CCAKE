@@ -1,0 +1,22 @@
+# Settings for the Python tools used on this repository (pytest and ruff).
+# CCAKE is not a Python package: there is nothing to install from this file.
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+# do not leave a .pytest_cache directory in the source tree
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+# A small set: pyflakes (unused or undefined names) and the pycodestyle checks that
+# point at real mistakes. Style is not enforced on the existing scripts.
+select = ["E4", "E7", "E9", "F"]
+# The plotting scripts call matplotlib.use() before importing pyplot, on purpose.
+ignore = ["E402"]
+
+[tool.ruff.format]
+# Only the files under ci/ and tests/ are kept formatted (see .pre-commit-config.yaml).
+quote-style = "preserve"

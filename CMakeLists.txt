@@ -46,7 +46,11 @@ set(CCAKE_ARCH "native" CACHE STRING "CPU architecture passed to -march/-mtune")
 
 option(CCAKE_LTO "Enable link-time optimization (slower build/link)" OFF)
 
-if(NOT USE_CUDA AND NOT CMAKE_BUILD_TYPE MATCHES Debug)
+# CCAKE_OPTIMIZE=OFF leaves the flags below out, so that a coverage or sanitizer
+# build can choose its own optimization level. Production builds keep the default.
+option(CCAKE_OPTIMIZE "Add -O3, -march/-mtune and loop unrolling to CPU builds" ON)
+
+if(CCAKE_OPTIMIZE AND NOT USE_CUDA AND NOT CMAKE_BUILD_TYPE MATCHES Debug)
   message(STATUS "Enabling optimized flags (-O3, arch '${CCAKE_ARCH}', unroll).")
   # -O3 + arch tuning + loop unrolling on top of the build-type defaults (Release
   # already adds -O3 -DNDEBUG). -ffast-math / -Ofast are DELIBERATELY avoided: the
@@ -54,7 +58,12 @@ if(NOT USE_CUDA AND NOT CMAKE_BUILD_TYPE MATCHES Debug)
   # semantics (NaN/inf handling, no reassociation), which -ffast-math would break.
   # -fno-math-errno is safe (we never read errno after libm calls) and lets the
   # compiler inline sqrt/etc.
-  add_compile_options(-O3 -march=${CCAKE_ARCH} -mtune=${CCAKE_ARCH} -funroll-loops -fno-math-errno)
+  # The x86-64-v2/v3/v4 levels are valid for -march but not for -mtune.
+  set(_ccake_tune "${CCAKE_ARCH}")
+  if(CCAKE_ARCH MATCHES "^x86-64-v")
+    set(_ccake_tune "generic")
+  endif()
+  add_compile_options(-O3 -march=${CCAKE_ARCH} -mtune=${_ccake_tune} -funroll-loops -fno-math-errno)
   # LTO is opt-in: across Kokkos/Cabana templates it can greatly increase link
   # time. Enable with -DCCAKE_LTO=ON once a plain build is confirmed working.
   if(CCAKE_LTO)
@@ -87,7 +96,8 @@ find_package(Cabana REQUIRED)
 include_directories(include)
 include_directories(${GSL_INCLUDE_DIRS})
 include_directories(${HDF5_INCLUDE_DIRS})
-include_directories(build)
+# config.h is generated in the build directory, whatever that directory is called.
+include_directories(${PROJECT_BINARY_DIR})
 ###############################################################
 # Hack to supress the use of -isystem flags
 set(CMAKE_NO_SYSTEM_FROM_IMPORTED 1)
@@ -117,42 +127,12 @@ target_link_libraries(validate_interpolator PRIVATE src)
 install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_SOURCE_DIR})
 
 ###############################################################
-#Turn on testing with 'cmake -DTESTING=ON ..'
-option(TESTING "Enable testing" OFF)
-if(ENABLE_TESTING)
-  # fetch googletest for unit testing
-  include(FetchContent)
-  FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/b796f7d44681514f58a683a3a71ff17c94edb0c1.zip
-   )
-   # For Windows: Prevent overriding the parent project's compiler/linker settings
-   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-   FetchContent_MakeAvailable(googletest)
-   enable_testing()
-   add_executable(vector_test unit_tests/vector_test.cpp)
-   add_executable(input_test unit_tests/input_test.cpp)
-   add_executable(kernel_test unit_tests/kernel_test.cpp)
-   add_executable(smoothing_test unit_tests/smoothing_test.cpp)
-   add_executable(grad_smoothing_test unit_tests/grad_smoothing_test.cpp)
-   add_executable(eom_default_test unit_tests/eom_default_test.cpp)
-   add_executable(evolver_test unit_tests/evolver_test.cpp)
-   add_executable(eos_interpolator_test unit_tests/eos_interpolator_test.cpp)
-   target_link_libraries(vector_test GTest::gtest_main)
-   target_link_libraries(input_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-   target_link_libraries(kernel_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-   target_link_libraries(smoothing_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-   target_link_libraries(grad_smoothing_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-   target_link_libraries(eom_default_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-   target_link_libraries(evolver_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-   target_link_libraries(eos_interpolator_test GTest::gtest_main src ${YAML_CPP_LIBRARIES})
-
-   include(GoogleTest)
-   gtest_discover_tests(vector_test)
-   gtest_discover_tests(input_test)
-   gtest_discover_tests(kernel_test)
-   gtest_discover_tests(grad_smoothing_test)
-   gtest_discover_tests(eom_default_test)
-   gtest_discover_tests(evolver_test)
-   gtest_discover_tests(eos_interpolator_test)
+# Tests: turn on with 'cmake -DENABLE_TESTING=ON ..', then run 'ctest'.
+# -DTESTING=ON, the spelling this file used to document, is accepted as well.
+option(ENABLE_TESTING "Build the tests and register them with CTest" OFF)
+option(TESTING "Same as ENABLE_TESTING (older spelling)" OFF)
+if(ENABLE_TESTING OR TESTING)
+  enable_testing()
+  add_subdirectory(unit_tests)
+  add_subdirectory(tests)
 endif()

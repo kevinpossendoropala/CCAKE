@@ -1,0 +1,119 @@
+# Au+Au 7.7 GeV, 3+1D, BES event 51: freeze-in initial condition plus 1,551 AMPT parton
+# sources, bh_new_1000 EoS (tests/physics/README.md). From the secVI CP1000 evt_0051 config;
+# evolution output off. @INPUT:<name>@ is replaced by tests/physics/run_check.py.
+initial_conditions:
+  type: freezein
+  coordinate_system: hyperbolic
+  file: "@INPUT:initial_condition@"
+  t0: 1.7
+  dimension: 3
+  input_as_entropy: false
+  freezein:
+    tol: 1.0e-10
+    max_iter: 100
+parameters:
+  dt: 0.05
+  h_T: 0.3
+  h_eta: 0.3
+  rk_order: 2
+  kernel_type: cubic_spline
+  energy_cutoff: 0.15
+  buffer_particles:
+    enabled: false
+    circular: false
+    padding_thickness: 0.1
+eos:
+  type: table
+  path: "@INPUT:eos@"
+  online_inverter_enabled: true
+  normalize_by_T: false
+  restrict_mu_T_ratios: false
+  gap_table_path: ''
+  gap_lookup_mode: linear
+  gap_match_tolerance: 0.05
+  prohibit_unstable_cs2: false
+particlization:
+  enabled: true
+  type: fixed_T
+  T: 150.0
+hydro:
+  baryon_charge_enabled: true
+  strange_charge_enabled: false
+  electric_charge_enabled: false
+  viscous_parameters:
+    diffusion:
+      input_initial_diffusion: false
+      mode: disabled
+      constant_kappa_over_T2:
+      - - 0.0
+        - 0.0
+        - 0.0
+      - - 0.0
+        - 0.0
+        - 0.0
+      - - 0.0
+        - 0.0
+        - 0.0
+      relaxation_mode: cb_over_T
+      critical_scaling: false
+      critical_point:
+        T: 126.5
+        muB: 598.5
+      critical_gaussian_width:
+        T: 25.0
+        muB: 100.0
+      C_B: 0.0
+    bulk:
+      bulk_from_trace: false
+      constant_zeta_over_s: 0.08
+      cs2_dependent_zeta_A: 2.6
+      cs2_dependent_zeta_p: 2.0
+      critical_scaling_bulk: false
+      mode: cs2_dependent
+      modulate_with_tanh: false
+      relaxation_mode: default
+      delta_PiPi_mode: israel-stewart
+      lambda_Pipi_mode: disabled
+      phi1_mode: disabled
+      phi3_mode: disabled
+      critical_scaling_enabled: false
+      bulk_tau_pi_coeff: 0.25
+    shear:
+      input_initial_shear: false
+      constant_eta_over_s: 0.08
+      mode: piecewise_muB
+      relaxation_mode: default
+      use_vorticity: false
+      delta_pipi_mode: default
+      tau_pipi_mode: disabled
+      lambda_piPi_mode: disabled
+      phi6_mode: disabled
+      phi7_mode: disabled
+      eta_0: 0.1014
+      eta_2: 0.169
+      eta_4: 0.39
+  jets:
+    type: disabled
+  source:
+    type: ic
+    model: AMPT
+    file: "@INPUT:sources@"
+    normalization: 1.1381
+    smearing_radius: 1.4
+    smearing_radius_eta: 1.0
+    propagate: false
+    deposit_steps: 4
+    enable_baryon: true
+    enable_strangeness: false
+    enable_electric: false
+    deposit_at_rapidity: true
+    kernel_renormalize: true
+    reheat_frozen_at_birth: true
+output:
+  print_conservation_state: true
+  hdf_evolution: false
+  txt_evolution: false
+  check_causality: true
+  causality_minimal: true
+  causality_minimal_stride: 20
+  evolution_stride: 4

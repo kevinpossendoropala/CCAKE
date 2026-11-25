@@ -13,40 +13,16 @@
 
 using namespace ccake;
 
-//Template instantiations
-template class Particle<1>;
-template class Particle<2>;
-template class Particle<3>;
 
 /// @brief Default constructor
 template<unsigned int D>
 Particle<D>::Particle() { input.s = 0.0; }
 
-/// @brief Copy constructor
-/// @tparam D The dimensionality of the problem
-/// @param p The particle to be copied
-/// @details Only copies the input densities, the position, velocity and shear
-/// tensor.
-template<unsigned int D>
-Particle<D>::Particle( const Particle<D>& p )
-{
-  r             = p.r;
-  input.e       = p.input.e;
-  input.rhoB    = p.input.rhoB;
-  input.rhoS    = p.input.rhoS;
-  input.rhoQ    = p.input.rhoQ;
-  hydro.u       = p.hydro.u;
-  hydro.shv     = p.hydro.shv;
-  input.s       = p.input.s;
-  hydro.diffusion = p.hydro.diffusion;
-  thermo.T      = p.thermo.T;
-  thermo.p      = p.thermo.p;
-  // Carry the freeze-in scratch densities through add_particle() (by-value).
-  for (int i = 0; i < 4; ++i)
-  {
-    freezein_Ttau[i] = p.freezein_Ttau[i];
-    freezein_jB[i]   = p.freezein_jB[i];
-    freezein_jS[i]   = p.freezein_jS[i];
-    freezein_jQ[i]   = p.freezein_jQ[i];
-  }
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class Particle<1>;
+template class Particle<2>;
+template class Particle<3>;
 }

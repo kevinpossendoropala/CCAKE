@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -26,10 +27,6 @@
 using namespace constants;
 using namespace ccake;
 
-//Template instantiations
-template class SystemState<1>;
-template class SystemState<2>;
-template class SystemState<3>;
 
 
 /// @brief Initializes the system state.
@@ -138,7 +135,13 @@ void SystemState<D>::copy_host_to_device(){
     host_hydro_scalar(iparticle, ccake::hydro_info::bulk_knudsen) = particles[iparticle].hydro.bulk_knudsen;
     host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_shear) = particles[iparticle].hydro.inverse_reynolds_shear;
     host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_bulk) = particles[iparticle].hydro.inverse_reynolds_bulk;
-  
+    host_hydro_scalar(iparticle, ccake::hydro_info::knudsen_diffusion_B) = particles[iparticle].hydro.knudsen_diffusion_B;
+    host_hydro_scalar(iparticle, ccake::hydro_info::knudsen_diffusion_S) = particles[iparticle].hydro.knudsen_diffusion_S;
+    host_hydro_scalar(iparticle, ccake::hydro_info::knudsen_diffusion_Q) = particles[iparticle].hydro.knudsen_diffusion_Q;
+    host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_diffusion_B) = particles[iparticle].hydro.inverse_reynolds_diffusion_B;
+    host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_diffusion_S) = particles[iparticle].hydro.inverse_reynolds_diffusion_S;
+    host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_diffusion_Q) = particles[iparticle].hydro.inverse_reynolds_diffusion_Q;
+
     
 
     // Copy hydro vector quantities
@@ -398,6 +401,12 @@ void SystemState<D>::copy_device_to_host(){
     particles[id].hydro.bulk_knudsen = host_hydro_scalar(iparticle, ccake::hydro_info::bulk_knudsen);
     particles[id].hydro.inverse_reynolds_shear = host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_shear);
     particles[id].hydro.inverse_reynolds_bulk = host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_bulk);
+    particles[id].hydro.knudsen_diffusion_B = host_hydro_scalar(iparticle, ccake::hydro_info::knudsen_diffusion_B);
+    particles[id].hydro.knudsen_diffusion_S = host_hydro_scalar(iparticle, ccake::hydro_info::knudsen_diffusion_S);
+    particles[id].hydro.knudsen_diffusion_Q = host_hydro_scalar(iparticle, ccake::hydro_info::knudsen_diffusion_Q);
+    particles[id].hydro.inverse_reynolds_diffusion_B = host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_diffusion_B);
+    particles[id].hydro.inverse_reynolds_diffusion_S = host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_diffusion_S);
+    particles[id].hydro.inverse_reynolds_diffusion_Q = host_hydro_scalar(iparticle, ccake::hydro_info::inverse_reynolds_diffusion_Q);
 
     for (int i=0; i<D; i++){
       particles[id].hydro.v(i) = host_hydro_vector(iparticle, ccake::hydro_info::v,i);
@@ -686,7 +695,12 @@ void SystemState<D>::reset_neighbour_list(){
       min_pos[idir] *= 3.;
   }
   //Cabana needs a 3D grid. We set the remaining dimensions to be a single cell
-  double neighborhood_radius = 2*h;
+  // The factorized kernel (3+1D), W = W_2D(r_perp; h_T) W_1D(|d eta|; h_eta), is
+  // nonzero on the cylinder r_perp < 2 h_T, |d eta| < 2 h_eta. The Verlet list is
+  // built on the sphere that contains it and then reduced to the cylinder (below).
+  const bool factorized = (D == 3) && settingsPtr->factorized_kernel;
+  const double h_eta = settingsPtr->hEta;
+  double neighborhood_radius = factorized ? 2.*std::sqrt(h*h + h_eta*h_eta) : 2*h;
   for(int idir=D; idir<3; ++idir) min_pos[idir] = -h;
   for(int idir=0; idir<3; ++idir)
     max_pos[idir] = -min_pos[idir];
@@ -699,6 +713,34 @@ void SystemState<D>::reset_neighbour_list(){
                                           neighborhood_radius, cell_ratio, min_pos, max_pos
                            );
   Kokkos::fence();
+
+  // Factorized kernel: keep exactly the pairs inside the cylinder, so that every
+  // SPH sum and the neighbour count (btrack) see the pairs the kernel reaches.
+  // Each particle's neighbours are compacted in place within its CSR segment
+  // (order kept); Cabana reads neighbours(offset + n) for n < count only.
+  if (factorized)
+  {
+    auto counts    = neighbour_list._data.counts;
+    auto offsets   = neighbour_list._data.offsets;
+    auto neighbors = neighbour_list._data.neighbors;
+    const double reach_T = 2.*h, reach_eta = 2.*h_eta;
+    Kokkos::parallel_for("factorized_cylinder", Kokkos::RangePolicy<ExecutionSpace>(0, counts.extent(0)),
+      KOKKOS_LAMBDA(const int i){
+        const auto start = offsets(i);
+        int kept = 0;
+        for (int n = 0; n < counts(i); ++n)
+        {
+          const int j = neighbors(start + n);
+          const double dx = device_position(i,0) - device_position(j,0);
+          const double dy = device_position(i,1) - device_position(j,1);
+          const double de = device_position(i,2) - device_position(j,2);
+          if (dx*dx + dy*dy < reach_T*reach_T && Kokkos::fabs(de) < reach_eta)
+            neighbors(start + kept++) = j;
+        }
+        counts(i) = kept;
+      });
+    Kokkos::fence();
+  }
 #ifdef __linux__
   malloc_trim(0);   // return freed Kokkos/Cabana pages to OS after neighbour list rebuild
 #endif
@@ -1002,3 +1044,11 @@ void SystemState<D>::compute_e_2_X(double slice, int i)
   // return std::make_pair(e_2_X, count);
 }
 
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class SystemState<1>;
+template class SystemState<2>;
+template class SystemState<3>;
+}

@@ -1,0 +1,9 @@
+# Tolerances of the physics checks: <check>: {<quantity>: <largest allowed value>}.
+#
+# Surface checks: the largest allowed |relative difference| from the reference, for any
+# quantity in the first column of the report (for example "sum V" or "<T>_V").
+# Gubser: the largest allowed value of a measure (for example "max |de/e|"), at every time.
+#
+# A quantity without a tolerance is measured and shown, never judged. These numbers are
+# decided by the physics owner; none is set yet.
+{}
