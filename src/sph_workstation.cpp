@@ -1,8 +1,7 @@
 #include "sph_workstation.h"
 #include "phase_profiler.h"
 //The cpp below needs to be included for the Kokkos lambda to be
-//properly compiled in the GPU
-#include "kernel.cpp"
+//properly compiled in the GPU (the SPH kernel is inline in kernel.h)
 #include "eom_default.cpp"
 #include "eom_cartesian.cpp"
 #include "transport_coefficients.cpp"
@@ -16,13 +15,6 @@ using namespace constants;
 namespace tc = ccake::transport_coefficients;
 
 namespace ccake{
-//Template instantiations
-template class SPHWorkstation<1,EoM_default>;
-template class SPHWorkstation<2,EoM_default>;
-template class SPHWorkstation<3,EoM_default>;
-template class SPHWorkstation<1,EoM_cartesian>;
-template class SPHWorkstation<2,EoM_cartesian>;
-template class SPHWorkstation<3,EoM_cartesian>;
 
 /// @brief Initialize the several components of the SPHWorkstation.
 /// @details SPHWorstation needs to load and initiualize a few objects before 
@@ -2835,3 +2827,15 @@ void SPHWorkstation<1, EoM_cartesian>::smooth_all_particle_gradients(double time
 }
 
 }; //namespace ccake
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class SPHWorkstation<1,EoM_default>;
+template class SPHWorkstation<2,EoM_default>;
+template class SPHWorkstation<3,EoM_default>;
+template class SPHWorkstation<1,EoM_cartesian>;
+template class SPHWorkstation<2,EoM_cartesian>;
+template class SPHWorkstation<3,EoM_cartesian>;
+}
