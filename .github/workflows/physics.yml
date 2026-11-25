@@ -129,6 +129,7 @@ jobs:
           CHECK: ${{ matrix.check }}
         run: |
           chmod +x bin/ccake
+          mkdir -p ~/.cache/ccake-physics   # so the cache step finds it even with no download
           python3 tests/physics/run_check.py --ccake bin/ccake --work runs --threads "$(nproc)" \
             --report "$GITHUB_STEP_SUMMARY" "$CHECK"
 
