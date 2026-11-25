@@ -122,3 +122,73 @@ def test_gubser_measures_are_zero_for_the_reference_itself(tmp_path):
 
     columns["e"] = columns["e"] * 1.01  # one per cent everywhere
     assert pt.gubser_measures(columns, ref)["max |de/e|"] == pytest.approx(0.01)
+
+
+CONSERVATION = "t Eloss S Btotal Stotal Qtotal\n1 0 10 2 0 0\n2 -1 12 2 0 0\n"
+
+
+def write_snapshot(path, value="1.5"):
+    """A system_state file: the time, then two particles with every column filled."""
+    row = " ".join([value] * (max(pt.STATE_COLUMNS.values()) + 1))
+    path.write_text("1.0\n%s\n%s\n" % (row, row))
+
+
+@pytest.mark.parametrize("dimension", [2, 3])
+def test_well_formed_counts_what_a_run_wrote(tmp_path, dimension):
+    (tmp_path / "conservation.dat").write_text(CONSERVATION)
+    write_snapshot(tmp_path / "system_state_0.dat")
+    write_surface(tmp_path / "freeze_out.dat", dimension, [{"V": 1.0}, {"V": 2.0}, {"V": 3.0}])
+    assert pt.well_formed(tmp_path, dimension, surface=True) == {
+        "conservation rows": 2,
+        "snapshots": 1,
+        "surface elements": 3,
+    }
+    # without a surface the file is not looked at
+    (tmp_path / "freeze_out.dat").unlink()
+    assert pt.well_formed(tmp_path, dimension, surface=False) == {
+        "conservation rows": 2,
+        "snapshots": 1,
+    }
+
+
+def test_well_formed_refuses_a_surface_without_elements(tmp_path):
+    (tmp_path / "conservation.dat").write_text(CONSERVATION)
+    write_surface(tmp_path / "freeze_out.dat", 2, [])
+    with pytest.raises(ValueError, match="did not reach freeze-out"):
+        pt.well_formed(tmp_path, 2, surface=True)
+
+
+def test_well_formed_refuses_a_surface_of_the_other_dimension(tmp_path):
+    (tmp_path / "conservation.dat").write_text(CONSERVATION)
+    write_surface(tmp_path / "freeze_out.dat", 3, [{"V": 1.0}])
+    with pytest.raises(ValueError, match="columns"):
+        pt.well_formed(tmp_path, 2, surface=True)
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf"])
+def test_well_formed_refuses_numbers_that_are_not_finite(tmp_path, bad):
+    (tmp_path / "conservation.dat").write_text(CONSERVATION.replace("12", bad))
+    with pytest.raises(ValueError, match="not finite"):
+        pt.well_formed(tmp_path, 2, surface=False)
+
+    (tmp_path / "conservation.dat").write_text(CONSERVATION)
+    write_snapshot(tmp_path / "system_state_3.dat", value=bad)
+    with pytest.raises(ValueError, match="system_state_3.dat"):
+        pt.well_formed(tmp_path, 2, surface=False)
+
+    (tmp_path / "system_state_3.dat").unlink()
+    write_surface(tmp_path / "freeze_out.dat", 2, [{"V": float(bad)}])
+    with pytest.raises(ValueError, match="freeze_out.dat"):
+        pt.well_formed(tmp_path, 2, surface=True)
+
+
+def test_well_formed_refuses_a_wrong_conservation_file(tmp_path):
+    (tmp_path / "conservation.dat").write_text("t Eloss S\n1 0 10\n")
+    with pytest.raises(ValueError, match="header"):
+        pt.well_formed(tmp_path, 2, surface=False)
+    (tmp_path / "conservation.dat").write_text("t Eloss S Btotal Stotal Qtotal\n")
+    with pytest.raises(ValueError, match="no row"):
+        pt.well_formed(tmp_path, 2, surface=False)
+    (tmp_path / "conservation.dat").write_text("t Eloss S Btotal Stotal Qtotal\n1 0 10 2 0\n")
+    with pytest.raises(ValueError, match="no row"):
+        pt.well_formed(tmp_path, 2, surface=False)

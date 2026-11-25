@@ -4,6 +4,7 @@ Only numpy is needed. Units are those of the CCAKE output files unless stated.
 """
 
 import math
+import warnings
 
 import numpy as np
 
@@ -137,6 +138,52 @@ def elementwise(reference, run, dimension):
         for name, i in col.items()
         if name != "ncols"
     }
+
+
+CONSERVATION_COLUMNS = ["t", "Eloss", "S", "Btotal", "Stotal", "Qtotal"]
+
+
+def well_formed(results, dimension, surface):
+    """What a run wrote, checked for form only: {what: how many}. No physics is judged.
+
+    conservation.dat must have its six columns and at least one row, every snapshot must
+    be readable, and with surface=True freeze_out.dat must have the layout of this
+    dimension and at least one element. Every number must be finite. The first problem
+    raises ValueError.
+    """
+
+    def finite(path, values):
+        if not np.all(np.isfinite(values)):
+            raise ValueError("%s holds a number that is not finite" % path)
+
+    counts = {}
+    path = results / "conservation.dat"
+    with open(path) as f:
+        names = f.readline().split()
+        rows = [line.split() for line in f if line.strip()]
+    if names != CONSERVATION_COLUMNS:
+        raise ValueError("%s: header %s, expected %s" % (path, names, CONSERVATION_COLUMNS))
+    if not rows or any(len(row) != len(names) for row in rows):
+        raise ValueError("%s: no row, or a row without %d columns" % (path, len(names)))
+    finite(path, np.array(rows, dtype=float))
+    counts["conservation rows"] = len(rows)
+
+    snapshots = sorted(results.glob("system_state_*.dat"))
+    for snapshot in snapshots:
+        _, columns = read_state(snapshot)
+        finite(snapshot, np.array(list(columns.values())))
+    counts["snapshots"] = len(snapshots)
+
+    if surface:
+        path = results / "freeze_out.dat"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # numpy warns about a file without rows
+            _, data = read_surface(path, dimension)
+        if not data.size:
+            raise ValueError("%s has no element: the run did not reach freeze-out" % path)
+        finite(path, data)
+        counts["surface elements"] = len(data)
+    return counts
 
 
 def relative_difference(reference, value):

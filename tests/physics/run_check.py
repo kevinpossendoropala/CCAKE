@@ -14,6 +14,10 @@ input does not match its checksum, or a judged quantity is outside its tolerance
 
 --update-reference writes the result of this run as the new reference of a surface check
 (do it only with a deliberate change of the physics, and say why in the commit).
+
+--capped runs each check for only its capped_steps time steps (checks.yaml) and checks
+that the run ended and that its files are well formed. Nothing is compared with a
+reference. The coverage build uses it: a full run takes hours without optimisation.
 """
 
 import argparse
@@ -113,7 +117,7 @@ def prepare_inputs(check, check_dir, work):
 
 
 # ------------------------------------------------------------------------------- run
-def run_ccake(ccake, check_dir, work, paths, threads):
+def run_ccake(ccake, check_dir, work, paths, threads, max_steps=None):
     config = (check_dir / "config.yaml").read_text()
     for name, path in paths.items():
         config = config.replace("@INPUT:%s@" % name, str(path))
@@ -123,6 +127,8 @@ def run_ccake(ccake, check_dir, work, paths, threads):
     (work / "config.yaml").write_text(config)
     results = work / "results"
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), OMP_PROC_BIND="false")
+    if max_steps is not None:
+        env["CCAKE_MAX_STEPS"] = str(max_steps)
     start = time.time()
     with open(work / "ccake.log", "w") as log:
         code = subprocess.call(
@@ -230,6 +236,18 @@ def compare_gubser(name, check, check_dir, results, tolerances):
     return rows, lines, {"measures": measures}
 
 
+def check_capped(check, results):
+    """A step-capped run: form of the output only (physics_tools.well_formed)."""
+    surface = check.get("capped_surface", check["kind"] == "surface")
+    counts = pt.well_formed(results, check["dimension"], surface)
+    rows = [(what, None, number, None, None, "measured") for what, number in counts.items()]
+    lines = [
+        "Capped at %d time steps: the output is well formed. Nothing was compared with a"
+        " reference." % check["capped_steps"]
+    ]
+    return rows, lines, {"capped": counts}
+
+
 # ---------------------------------------------------------------------------- report
 def fmt(x):
     if x is None:
@@ -283,17 +301,37 @@ def main():
     parser.add_argument("--threads", type=int, default=os.cpu_count())
     parser.add_argument("--report", help="append the Markdown report to this file")
     parser.add_argument("--update-reference", action="store_true")
+    parser.add_argument(
+        "--capped", action="store_true", help="capped_steps time steps only, form of the output"
+    )
     args = parser.parse_args()
+    if args.capped and args.update_reference:
+        parser.error("a capped run cannot be a reference")
 
     checks = yaml.safe_load((HERE / "checks.yaml").read_text())
     tolerances = yaml.safe_load((HERE / "tolerances.yaml").read_text()) or {}
+    # a check of kind "run" has no reference: it exists only capped
+    usable = {
+        n: c
+        for n, c in checks.items()
+        if ("capped_steps" in c if args.capped else c["kind"] != "run")
+    }
     names = list(args.checks)
     if args.all:
-        names = list(checks)
+        names = list(usable)
     elif args.github:
-        names = [n for n, c in checks.items() if c.get("github")]
+        names = [n for n, c in usable.items() if c.get("github")]
     if not names:
         parser.error("name a check, or give --github or --all")
+    for name in names:
+        if name not in checks:
+            parser.error("checks.yaml has no check %r" % name)
+        if name not in usable:
+            parser.error(
+                "%s has no capped_steps" % name
+                if args.capped
+                else "%s has no reference: run it with --capped" % name
+            )
 
     failed = False
     for name in names:
@@ -306,12 +344,20 @@ def main():
         try:
             paths = prepare_inputs(check, check_dir, work)
             info["exit"], info["seconds"], results = run_ccake(
-                args.ccake, check_dir, work, paths, args.threads
+                args.ccake,
+                check_dir,
+                work,
+                paths,
+                args.threads,
+                check["capped_steps"] if args.capped else None,
             )
             if info["exit"] != 0:
                 raise RuntimeError("ccake exited with code %d (see %s)" % (info["exit"], work))
-            compare = compare_surface if check["kind"] == "surface" else compare_gubser
-            rows, lines, data = compare(name, check, check_dir, results, tolerances)
+            if args.capped:
+                rows, lines, data = check_capped(check, results)
+            else:
+                compare = compare_surface if check["kind"] == "surface" else compare_gubser
+                rows, lines, data = compare(name, check, check_dir, results, tolerances)
             if args.update_reference and check["kind"] == "surface":
                 update_reference(check, check_dir, results, data)
                 lines.append("The reference was replaced by this run.")

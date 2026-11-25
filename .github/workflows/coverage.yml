@@ -1,5 +1,7 @@
 # Measures which lines of src/ and include/ the tests execute, and sends the
-# result to Codecov, which reports on the lines a pull request changes.
+# result to Codecov, which reports on the lines a pull request changes. Besides the
+# tests it runs the physics checks of tests/physics/ for a few time steps each, so
+# that the code only a whole simulation reaches is counted too.
 #
 # This is a separate workflow on purpose: if Codecov is unreachable, the build
 # and test results of the "CI" workflow are not affected.
@@ -25,7 +27,7 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90  # the capped physics runs take about 25 min without optimisation
     permissions:
       contents: read
       id-token: write  # lets the upload prove where it comes from; no stored secret needed
@@ -41,7 +43,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libhdf5-dev libgsl-dev libyaml-cpp-dev \
-            python3-numpy python3-pandas python3-pytest
+            python3-numpy python3-pandas python3-pytest python3-yaml
           pipx install gcovr==8.8
 
       # Same key as the gcc-13 job of the CI workflow, so the two share one copy.
@@ -81,11 +83,34 @@ jobs:
           # the known-issue tests count for coverage too; they are expected to fail
           ctest --test-dir build -j 2 --timeout 1200 -L quarantine || true
 
+      # Downloaded inputs (the Houston EoS from Zenodo) are kept between runs.
+      - name: Restore inputs of the physics checks
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccake-physics
+          key: physics-inputs-coverage-${{ hashFiles('tests/physics/checks.yaml') }}
+          restore-keys: |
+            physics-inputs-coverage-
+            physics-inputs-pbpb_2d-
+
+      # A full run takes hours without optimisation. Each check runs for its
+      # capped_steps (tests/physics/checks.yaml); only the form of the output is checked.
+      - name: Physics checks, a few time steps each
+        run: |
+          mkdir -p ~/.cache/ccake-physics
+          python3 tests/physics/run_check.py --ccake build/ccake \
+            --work "$RUNNER_TEMP/capped" --threads "$(nproc)" \
+            --report "$GITHUB_STEP_SUMMARY" --capped --github
+
+      # The SPH loops of the physics runs execute some lines more than 2^32 times,
+      # gcovr's default limit for a believable count; 2^40 still catches a corrupted
+      # counter (those come out near 2^64).
       - name: Coverage report
         run: |
           gcovr --root . --object-directory build \
             --filter 'src/' --filter 'include/' \
             --gcov-executable gcov-13 --exclude-throw-branches \
+            --gcov-suspicious-hits-threshold 1099511627776 \
             --txt coverage.txt --cobertura coverage.xml --html coverage.html
           {
             echo "## Coverage of src/ and include/"
@@ -95,14 +120,15 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Pull requests from forks cannot use the identity token; Codecov accepts
-      # their uploads without one.
+      # Pull requests from another repository (a fork) cannot use the identity
+      # token; Codecov accepts their uploads without one. (Not head.repo.fork:
+      # that is true for every pull request inside a repository that is itself a fork.)
       - name: Upload to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: coverage.xml
           disable_search: true
-          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
           fail_ci_if_error: false
 
       - name: Keep the report

@@ -9,7 +9,8 @@ the code, and `delta_submit.sh` runs them on Delta.
 |---|---|---|
 | `gubser_bsq` | semi-analytic BSQ viscous Gubser flow (VGCC, Ingles et al. arXiv:2503.20021), as in arXiv:2511.22852 Fig. 7 | GitHub, Delta |
 | `pbpb_2d` | a reference run: Pb+Pb 5.02 TeV, 2+1D, TRENTo+ICCING, B/S/Q, Houston EoS | GitHub, Delta |
-| `auau77_3d` | a reference run: Au+Au 7.7 GeV, 3+1D, freeze-in initial condition, AMPT parton sources, bh_new_1000 EoS | Delta (its inputs are not public yet) |
+| `auau77_3d` | a reference run: Au+Au 7.7 GeV, 3+1D, freeze-in initial condition, AMPT parton sources, bh_new_1000 EoS (inputs: Zenodo record 24532535) | GitHub, Delta |
+| `gubser_cartesian` | nothing: the initial condition of `gubser_bsq` in Cartesian coordinates, capped runs only | GitHub, Delta |
 
 `checks.yaml` describes each check and its inputs, with their SHA-256.
 
@@ -29,6 +30,20 @@ Python needs numpy and PyYAML. Inputs are found in the repository (`.xz` files),
 path in `checks.yaml` (Delta) or under `$CCAKE_PHYSICS_DATA`, or downloaded into
 `$CCAKE_PHYSICS_CACHE` (default `~/.cache/ccake-physics`). The report is Markdown; the numbers
 of each check are in `<work>/<check>/result.json`.
+
+## Capped runs, for coverage
+
+```bash
+python3 tests/physics/run_check.py --ccake build/ccake --work /tmp/capped --capped --github
+```
+
+`--capped` runs each check for only its `capped_steps` time steps (`checks.yaml`), with the
+same configuration and inputs. It checks that CCAKE ends without an error and that its files
+are well formed: `conservation.dat` with its six columns, readable snapshots, for a surface
+check a `freeze_out.dat` of the right width with at least one element, and no number that is
+NaN or infinite. Nothing is compared with a reference. The coverage workflow
+(`.github/workflows/coverage.yml`) runs them, because a full run takes hours in its build
+without optimisation; this is how the code that only a whole simulation reaches is counted.
 
 ## What is compared
 

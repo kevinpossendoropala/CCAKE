@@ -1,0 +1,70 @@
+# The initial condition of gubser_bsq in Cartesian coordinates: a 2D fluid in (x, y) at
+# fixed t, so that the Cartesian equations of motion run (tests/physics/README.md). The
+# settings are those of ../gubser_bsq/config.yaml with coordinate_system changed. It is not
+# Gubser flow; "run_check.py --capped" runs it for a few steps and compares nothing.
+---
+initial_conditions:
+  type: ccake
+  file: "@INPUT:initial_condition@"
+  t0: 1.0
+  dimension: 2
+  coordinate_system: cartesian
+  input_as_entropy: false
+parameters:
+  dt: 0.001
+  max_tau: 1.6005
+  h_T: 0.1
+  h_eta: 0.1
+  rk_order: 2
+  kernel_type: cubic_spline
+  energy_cutoff: 0.0
+  buffer_particles:
+    enabled: true
+    circular: true
+    padding_thickness: 0.1
+eos:
+  type: conformal
+  path: EoS/Houston
+  online_inverter_enabled: true
+particlization:
+  enabled: false                   # compare against the continuous hydro solution
+  type: fixed_T
+  T: 153.334025
+hydro:
+  baryon_charge_enabled: true
+  strange_charge_enabled: true
+  electric_charge_enabled: true
+  viscous_parameters:
+    shear:
+      mode: constant
+      constant_eta_over_s: 0.2
+      relaxation_mode: Gubser        # tau_pi = 5 eta/w (the paper config wrote "gubser", which fell through to the default max(5 eta/w, 0.005 fm): identical here)
+      input_initial_shear: true
+      use_vorticity: false
+      delta_pipi_mode: default       # 4/3 tau_pi (Israel-Stewart as in Marrochio et al.)
+      tau_pipi_mode: disabled
+      lambda_piPi_mode: disabled
+      phi6_mode: disabled
+      phi7_mode: disabled
+    bulk:
+      mode: constant
+      constant_zeta_over_s: 0.0
+      cs2_dependent_zeta_A: 0.0
+      cs2_dependent_zeta_p: 0.0
+      relaxation_mode: default
+      modulate_with_tanh: false
+      bulk_from_trace: false
+      delta_PiPi_mode: israel-stewart
+      lambda_Pipi_mode: disabled
+      phi1_mode: disabled
+      phi3_mode: disabled
+    diffusion:
+      mode: disabled
+      input_initial_diffusion: false
+output:
+  print_conservation_state: true
+  calculate_observables: false
+  hdf_evolution: false
+  txt_evolution: true
+  evolution_stride: 100
+  check_causality: false

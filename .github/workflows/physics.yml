@@ -102,6 +102,8 @@ jobs:
             minutes: 240
           - check: pbpb_2d
             minutes: 90
+          - check: auau77_3d
+            minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -123,6 +125,8 @@ jobs:
         with:
           path: ~/.cache/ccake-physics
           key: physics-inputs-${{ matrix.check }}-${{ hashFiles('tests/physics/checks.yaml') }}
+          # the files are kept by checksum, so an older cache is still good
+          restore-keys: physics-inputs-${{ matrix.check }}-
 
       - name: Run and compare
         env:
