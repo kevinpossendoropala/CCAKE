@@ -9,9 +9,6 @@
 
 using namespace ccake;
 
-template class ccake::EoM_default<1>;
-template class ccake::EoM_default<2>;
-template class ccake::EoM_default<3>;
 
 /// @brief Update gamma and v
 /// @tparam D The number of spatial dimensions.
@@ -1988,6 +1985,11 @@ void EoM_default<D>::check_causality(std::shared_ptr<SystemState<D>> sysPtr)
   causality::classify_particles<milne::Matrix<double,4,4>>(sysPtr);
 }
 
-
-
-       
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class EoM_default<1>;
+template class EoM_default<2>;
+template class EoM_default<3>;
+}

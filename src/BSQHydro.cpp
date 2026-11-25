@@ -5,13 +5,6 @@
 
 using namespace ccake;
 
-//Template instantiations
-template class ccake::BSQHydro<1,EoM_default>;
-template class ccake::BSQHydro<2,EoM_default>;
-template class ccake::BSQHydro<3,EoM_default>;
-template class ccake::BSQHydro<1,EoM_cartesian>;
-template class ccake::BSQHydro<2,EoM_cartesian>;
-template class ccake::BSQHydro<3,EoM_cartesian>;
 
 /// @brief Constructor for the BSQHydro class.
 /// @details This constructor initializes a BSQHydro object with the given
@@ -869,4 +862,16 @@ void BSQHydro<D,TEOM>::run()
     wsPtr->bbmg.copy_device_to_host_BBMG();
     outPtr->print_jet_final_to_txt(out_dir + "/jet_final.dat");
   }
+}
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class BSQHydro<1,EoM_default>;
+template class BSQHydro<2,EoM_default>;
+template class BSQHydro<3,EoM_default>;
+template class BSQHydro<1,EoM_cartesian>;
+template class BSQHydro<2,EoM_cartesian>;
+template class BSQHydro<3,EoM_cartesian>;
 }

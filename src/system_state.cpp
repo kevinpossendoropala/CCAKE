@@ -27,10 +27,6 @@
 using namespace constants;
 using namespace ccake;
 
-//Template instantiations
-template class ccake::SystemState<1>;
-template class ccake::SystemState<2>;
-template class ccake::SystemState<3>;
 
 
 /// @brief Initializes the system state.
@@ -1048,3 +1044,11 @@ void SystemState<D>::compute_e_2_X(double slice, int i)
   // return std::make_pair(e_2_X, count);
 }
 
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class SystemState<1>;
+template class SystemState<2>;
+template class SystemState<3>;
+}

@@ -4,10 +4,6 @@
 
 namespace ccake
 {
-// Source<D> is held by SPHWorkstation<D>, instantiated for D = 1, 2, 3.
-template class Source<1>;
-template class Source<2>;
-template class Source<3>;
 
 namespace
 {
@@ -756,3 +752,12 @@ void Source<D>::build_step_sources()
 }
 
 }// namespace ccake
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class Source<1>;
+template class Source<2>;
+template class Source<3>;
+}

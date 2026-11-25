@@ -4,13 +4,6 @@ using namespace constants;
 using namespace ccake;
 
 
-//Template instantiations
-template class ccake::Output<1, EoM_default>;
-template class ccake::Output<2, EoM_default>;
-template class ccake::Output<3, EoM_default>;
-template class ccake::Output<1, EoM_cartesian>;
-template class ccake::Output<2, EoM_cartesian>;
-template class ccake::Output<3, EoM_cartesian>;
 
 
 // Constructors and destructors.
@@ -637,4 +630,16 @@ void Output<2,EoM_cartesian>::print_freeze_out(std::shared_ptr<FreezeOut<2>> fre
   fo_particles_buffered += count;
   formatted_output::detail("Buffered " + std::to_string(count) + " freeze-out particles.");
   return;
+}
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class Output<1, EoM_default>;
+template class Output<2, EoM_default>;
+template class Output<3, EoM_default>;
+template class Output<1, EoM_cartesian>;
+template class Output<2, EoM_cartesian>;
+template class Output<3, EoM_cartesian>;
 }

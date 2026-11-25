@@ -9,9 +9,6 @@
 
 using namespace ccake;
 
-template class ccake::EoM_cartesian<1>;
-template class ccake::EoM_cartesian<2>;
-template class ccake::EoM_cartesian<3>;
 
 /// @brief Update gamma and v
 /// @tparam D The number of spatial dimensions.
@@ -1905,14 +1902,11 @@ void EoM_cartesian<D>::check_causality(std::shared_ptr<SystemState<D>> sysPtr)
   causality::classify_particles<cartesian::Matrix<double,4,4>>(sysPtr);
 }
 
-
-
-       
-
-
-
-   
-   
-   
-   
-   
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class EoM_cartesian<1>;
+template class EoM_cartesian<2>;
+template class EoM_cartesian<3>;
+}

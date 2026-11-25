@@ -2,10 +2,6 @@
 
 using namespace ccake;
 
-//Template instantiations
-template class ccake::Evolver<1>;
-template class ccake::Evolver<2>;
-template class ccake::Evolver<3>;
 
 /// @brief Create object responsible for controlling hydro evolution.
 /// @details This constructor sets up the evolver object with pointers to
@@ -562,3 +558,11 @@ void Evolver<D>::advance_timestep_rk4( double dt,
       return;
 }
 
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class Evolver<1>;
+template class Evolver<2>;
+template class Evolver<3>;
+}

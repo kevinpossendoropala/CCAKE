@@ -175,8 +175,6 @@ public:
 
 using namespace ccake;
 
-template class ccake::BBMG<2>;
-template class ccake::BBMG<3>;
 
 template <unsigned int D>
 double BBMG<D>::get_kappa(double T) //This is taken from one plot we found of Barbara's, no reason to believe this should be set in stone. Will test multiple Kappa's
@@ -565,6 +563,13 @@ void BBMG<D>::propagate()
 }
 
  //ccake namespace
+
+// Explicit instantiations. They stay after every member definition above: an explicit
+// instantiation only instantiates the members that are already defined (GCC defers
+// it to the end of the file, Clang does not).
+namespace ccake {
+template class BBMG<2>;
+template class BBMG<3>;
+}
+
 #endif
-
-
